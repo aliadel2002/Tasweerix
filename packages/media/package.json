@@ -1,0 +1,17 @@
+{
+  "name": "@tasweerix/media",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Tasweerix media I/O: asset providers for browsers, ffmpeg/ffprobe services for Node, subtitles.",
+  "license": "MIT",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./node": "./src/node/index.ts"
+  },
+  "dependencies": {
+    "@tasweerix/core": "workspace:*",
+    "@tasweerix/render": "workspace:*"
+  }
+}

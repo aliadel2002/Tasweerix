@@ -1,0 +1,22 @@
+{
+  "name": "@tasweerix/cli",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Tasweerix command line: render videos, stills and audio; run the studio.",
+  "license": "MIT",
+  "bin": { "tasweerix": "./bin/tasweerix.mjs" },
+  "main": "./src/index.ts",
+  "exports": { ".": "./src/index.ts" },
+  "dependencies": {
+    "@tasweerix/core": "workspace:*",
+    "@tasweerix/media": "workspace:*",
+    "@tasweerix/render": "workspace:*",
+    "tasweerix": "workspace:*",
+    "commander": "^12.1.0",
+    "esbuild": "^0.24.0",
+    "playwright-core": "1.56.1",
+    "tsx": "^4.19.2",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": { "@types/ws": "^8.5.13" }
+}

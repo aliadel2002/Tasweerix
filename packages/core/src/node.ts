@@ -118,7 +118,7 @@ export interface AnimateTiming {
  * Base class of the retained scene graph. Nodes hold Animatable props and timing; they never
  * hold per-frame state, which makes any frame renderable in any order.
  */
-export class SceneNode<P extends object = {}> {
+export class SceneNode<P extends object = any> {
   readonly kind: string;
   readonly id: string;
   name?: string;

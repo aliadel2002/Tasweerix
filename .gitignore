@@ -7,3 +7,5 @@ out/
 coverage/
 test-results/
 __screenshots__/actual/
+.tasweerix-test/
+packages/*/test/.tmp/

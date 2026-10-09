@@ -1,0 +1,127 @@
+import { createReadStream, existsSync, statSync } from 'node:fs';
+import type { IncomingMessage, ServerResponse } from 'node:http';
+import { extname, isAbsolute, normalize, resolve, sep } from 'node:path';
+import { decodePcm, interleave, probe } from './ffmpeg';
+import { FrameServer } from './frames';
+
+export const MIME: Record<string, string> = {
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.mjs': 'text/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.json': 'application/json',
+  '.map': 'application/json',
+  '.svg': 'image/svg+xml',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.webp': 'image/webp',
+  '.gif': 'image/gif',
+  '.avif': 'image/avif',
+  '.mp4': 'video/mp4',
+  '.webm': 'video/webm',
+  '.mov': 'video/quicktime',
+  '.mp3': 'audio/mpeg',
+  '.wav': 'audio/wav',
+  '.m4a': 'audio/mp4',
+  '.aac': 'audio/aac',
+  '.ogg': 'audio/ogg',
+  '.flac': 'audio/flac',
+  '.ttf': 'font/ttf',
+  '.otf': 'font/otf',
+  '.woff': 'font/woff',
+  '.woff2': 'font/woff2',
+  '.cube': 'text/plain',
+  '.srt': 'text/plain; charset=utf-8',
+  '.vtt': 'text/vtt; charset=utf-8',
+  '.txt': 'text/plain; charset=utf-8',
+  '.wasm': 'application/wasm',
+};
+
+/** Resolves an asset path inside root (rejects traversal). URLs pass through for ffmpeg. */
+export function resolveAsset(root: string, src: string): string {
+  if (/^https?:\/\//.test(src)) return src;
+  const clean = decodeURIComponent(src.replace(/^\/+/, ''));
+  const full = isAbsolute(clean) && clean.startsWith(root) ? normalize(clean) : resolve(root, clean);
+  const r = resolve(root);
+  if (full !== r && !full.startsWith(r + sep)) throw new Error(`Path escapes project root: ${src}`);
+  return full;
+}
+
+export interface MediaHandlerOptions {
+  root: string;
+  frames?: FrameServer;
+}
+
+/**
+ * HTTP handler for the /__tx media API used by browser pages:
+ *   /__tx/probe?src=   → MediaInfo JSON
+ *   /__tx/frame?src=&t=&w=&h=&client=  → raw RGBA (x-width / x-height headers)
+ *   /__tx/pcm?src=&rate=&channels=     → interleaved float32 little-endian PCM
+ * Returns true when the request was handled.
+ */
+export function createMediaHandler(opts: MediaHandlerOptions) {
+  const frames = opts.frames ?? new FrameServer();
+  const handler = async (req: IncomingMessage, res: ServerResponse): Promise<boolean> => {
+    const url = new URL(req.url ?? '/', 'http://x');
+    if (!url.pathname.startsWith('/__tx/')) return false;
+    try {
+      const src = url.searchParams.get('src') ?? '';
+      const file = resolveAsset(opts.root, src);
+      if (url.pathname === '/__tx/probe') {
+        const info = await probe(file);
+        res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+        res.end(JSON.stringify(info));
+        return true;
+      }
+      if (url.pathname === '/__tx/frame') {
+        const t = Number(url.searchParams.get('t') ?? 0);
+        const w = url.searchParams.get('w');
+        const h = url.searchParams.get('h');
+        const f = await frames.frame(file, t, { width: w ? Number(w) : undefined, height: h ? Number(h) : undefined, client: url.searchParams.get('client') ?? '0' });
+        res.writeHead(200, { 'content-type': 'application/octet-stream', 'x-width': String(f.width), 'x-height': String(f.height), 'access-control-expose-headers': 'x-width, x-height', 'cache-control': 'no-store' });
+        res.end(f.data);
+        return true;
+      }
+      if (url.pathname === '/__tx/pcm') {
+        const rate = Number(url.searchParams.get('rate') ?? 48000);
+        const ch = Number(url.searchParams.get('channels') ?? 2);
+        const pcm = interleave(await decodePcm(file, rate, ch));
+        res.writeHead(200, { 'content-type': 'application/octet-stream', 'x-sample-rate': String(rate), 'x-channels': String(ch) });
+        res.end(Buffer.from(pcm.buffer, pcm.byteOffset, pcm.byteLength));
+        return true;
+      }
+      res.writeHead(404).end('unknown endpoint');
+    } catch (e) {
+      res.writeHead(500, { 'content-type': 'text/plain' }).end(String((e as Error).message ?? e));
+    }
+    return true;
+  };
+  return Object.assign(handler, { frames });
+}
+
+/** Minimal static file handler (with range support for media seeking). */
+export function serveStatic(root: string, req: IncomingMessage, res: ServerResponse, pathname?: string): boolean {
+  let file: string;
+  try {
+    file = resolveAsset(root, pathname ?? new URL(req.url ?? '/', 'http://x').pathname);
+  } catch {
+    res.writeHead(403).end();
+    return true;
+  }
+  if (!existsSync(file) || !statSync(file).isFile()) return false;
+  const size = statSync(file).size;
+  const type = MIME[extname(file).toLowerCase()] ?? 'application/octet-stream';
+  const range = req.headers.range;
+  if (range) {
+    const m = /bytes=(\d*)-(\d*)/.exec(range);
+    const start = m?.[1] ? Number(m[1]) : 0;
+    const end = m?.[2] ? Number(m[2]) : size - 1;
+    res.writeHead(206, { 'content-type': type, 'content-range': `bytes ${start}-${end}/${size}`, 'accept-ranges': 'bytes', 'content-length': end - start + 1 });
+    createReadStream(file, { start, end }).pipe(res);
+  } else {
+    res.writeHead(200, { 'content-type': type, 'content-length': size, 'accept-ranges': 'bytes', 'cache-control': 'no-cache' });
+    createReadStream(file).pipe(res);
+  }
+  return true;
+}
