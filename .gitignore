@@ -1,0 +1,9 @@
+node_modules/
+dist/
+out/
+.tasweerix/
+*.log
+.DS_Store
+coverage/
+test-results/
+__screenshots__/actual/
