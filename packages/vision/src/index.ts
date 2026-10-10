@@ -1,8 +1,7 @@
 import { fitRect, getEnv, keys, resolve, toSeconds, type Driver, type Env, type FrameContext, type TimeInput, type Track, type Vec2, type VideoNode } from '@tasweerix/core';
 import type { MotionData } from './motion';
-import { computeStabilization, correctionAt, type StabilizeData, type StabilizeOptions } from './stabilize';
+import { applyMediaTransform, computeStabilization, correctionAt, estimateReadout, type StabilizeData, type StabilizeOptions } from './stabilize';
 import { pointAt, type PointTrack } from './track';
-import { happly, toHomography } from './homography';
 
 export * from './image';
 export * from './features';
@@ -38,6 +37,8 @@ export interface AnalyzeMotionOptions {
   translationOnly?: boolean;
   /** 'perspective' also measures per-frame homographies (needed by `stabilize({ model: 'perspective' })`). */
   model?: 'similarity' | 'perspective';
+  /** Also measure rolling-shutter shear (needed by `stabilize({ rollingShutter: 'auto' })`). */
+  rollingShutter?: boolean;
 }
 
 /** Measures frame-to-frame camera motion of a video (host-side, cached on disk). */
@@ -45,6 +46,7 @@ export async function analyzeMotion(src: string, o: AnalyzeMotionOptions = {}, e
   const params: Record<string, unknown> = { from: o.from !== undefined ? toSeconds(o.from) : 0, to: o.to !== undefined ? toSeconds(o.to) : null, width: o.width ?? ANALYSIS_WIDTH, translationOnly: !!o.translationOnly };
   // Only added when set, so similarity analyses keep their existing cache keys.
   if (o.model === 'perspective') params.model = 'perspective';
+  if (o.rollingShutter) params.rollingShutter = true;
   const run = host(env, 'analyzeMotion()');
   return cached(env, `vision.motion:${src}:${JSON.stringify(params)}`, src, async () => (await run('vision.motion', src, params)) as MotionData);
 }
@@ -56,11 +58,12 @@ export async function analyzeMotion(src: string, o: AnalyzeMotionOptions = {}, e
  *   c.add(await stabilize(video('handheld.mp4', { trim: [3, 9] }), { smoothing: 1.5 }))
  *   c.add(await stabilize(video('shaky.mp4'), { mode: 'lock' }))   // tripod look
  *   c.add(await stabilize(video('walk.mp4'), { model: 'perspective' }))   // also removes keystone wobble
+ *   c.add(await stabilize(video('phone.mp4'), { rollingShutter: 'auto' }))   // and jello / skew
  */
 export async function stabilize<N extends VideoNode>(node: N, o: StabilizeOptions & { analysisWidth?: number; translationOnly?: boolean } = {}, env: Env = getEnv()): Promise<N> {
   // Analyse the trimmed range only (looping or reversed clips use the whole file).
   const whole = node.loop || node.speed < 0;
-  const motion = await analyzeMotion(node.src, { from: whole ? 0 : node.trimIn, to: whole ? undefined : node.trimOut, width: o.analysisWidth, translationOnly: o.translationOnly, model: o.model }, env);
+  const motion = await analyzeMotion(node.src, { from: whole ? 0 : node.trimIn, to: whole ? undefined : node.trimOut, width: o.analysisWidth, translationOnly: o.translationOnly, model: o.model, rollingShutter: o.rollingShutter !== undefined && o.rollingShutter !== 0 }, env);
   const data = computeStabilization(motion, o);
   return applyStabilization(node, data);
 }
@@ -112,7 +115,7 @@ export function follow(video: VideoNode, track: PointTrack, offset: Vec2 = [0, 0
     // Centered frame coordinates in frame widths, through the media transform, then box space.
     let q: Vec2 = [p[0] / natW - 0.5, (p[1] - natH / 2) / natW];
     const xf = video.mediaTransform?.(st);
-    if (xf) q = happly(toHomography(xf), q);
+    if (xf) q = applyMediaTransform(xf, q);
     const cx = -size[0] / 2 + fit.x + fit.width / 2;
     const cy = -size[1] / 2 + fit.y + fit.height / 2;
     return [cx + q[0] * fit.width + offset[0], cy + q[1] * fit.width + offset[1]];
@@ -128,4 +131,4 @@ export function trackToKeys(track: PointTrack, o: { every?: number; timeOffset?:
 }
 
 /** Everything in one namespace: `vision.stabilize(...)`. */
-export const vision = { analyzeMotion, stabilize, applyStabilization, trackPoint, follow, trackToKeys, computeStabilization, correctionAt, pointAt };
+export const vision = { analyzeMotion, stabilize, applyStabilization, trackPoint, follow, trackToKeys, computeStabilization, correctionAt, pointAt, estimateReadout };

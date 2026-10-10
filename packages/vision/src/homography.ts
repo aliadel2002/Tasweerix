@@ -48,7 +48,7 @@ export function hscale(m: Homography, k: number): Homography {
 }
 
 /** Solves A·x = b (n × n, row-major) by Gaussian elimination with partial pivoting. */
-function solve(A: number[][], b: number[]): number[] | null {
+export function solveLinear(A: number[][], b: number[]): number[] | null {
   const n = b.length;
   const M = A.map((row, i) => [...row, b[i]!]);
   for (let col = 0; col < n; col++) {
@@ -104,7 +104,7 @@ export function fitHomography(src: Vec2[], dst: Vec2[]): Homography | null {
     add([x, y, 1, 0, 0, 0, -u * x, -u * y], u);
     add([0, 0, 0, x, y, 1, -v * x, -v * y], v);
   }
-  const h = solve(AtA, Atb);
+  const h = solveLinear(AtA, Atb);
   if (!h || h.some((v) => !Number.isFinite(v))) return null;
   return hcompose(hinvert(Td), hcompose([...h, 1] as Homography, Ts));
 }

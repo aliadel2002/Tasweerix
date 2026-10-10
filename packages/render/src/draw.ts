@@ -173,11 +173,20 @@ uniform vec3 uH1;
 uniform vec3 uH2;
 uniform vec4 uCrop;
 uniform float uAspect;
+uniform vec4 uRows;
+uniform float uRowAspect;
 void main() {
   vec3 q = vec3(vUv.x - 0.5, (vUv.y - 0.5) * uAspect, 1.0);
   vec3 p = vec3(dot(uH0, q), dot(uH1, q), dot(uH2, q));
   if (p.z <= 0.0) { outColor = vec4(0.0); return; }
-  vec2 uv = vec2(p.x / p.z + 0.5, p.y / p.z / uAspect + 0.5);
+  vec2 c = p.xy / p.z;
+  // Rolling shutter: the source point s satisfies s − shift(row of s) = c (a few fixed-point steps).
+  vec2 s = c;
+  for (int k = 0; k < 4; k++) {
+    float r = s.y / uRowAspect;
+    s = c + uRows.xy * r + uRows.zw * r * r;
+  }
+  vec2 uv = vec2(s.x + 0.5, s.y / uAspect + 0.5);
   if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) { outColor = vec4(0.0); return; }
   outColor = texture(uTex, uCrop.xy + uv * uCrop.zw);
 }`;
@@ -212,14 +221,29 @@ export function drawMedia(d: DrawContext, img: CanvasImageSource & { width: numb
   }
   const dx = -size[0] / 2 + fit.x;
   const dy = -size[1] / 2 + fit.y;
-  // A homography with perspective terms cannot be expressed as a 2D canvas transform: warp on the GPU.
-  if (xf?.length === 9 && (Math.abs(xf[6]) > 1e-9 || Math.abs(xf[7]) > 1e-9)) {
+  // Rolling-shutter rows and perspective terms cannot be expressed as a 2D canvas transform: warp on the GPU.
+  const rows = xf && !Array.isArray(xf) ? xf : null;
+  const m = rows ? rows.matrix : (xf as Exclude<MediaTransform, { rows: unknown }> | null | undefined);
+  if (rows || (m?.length === 9 && (Math.abs(m[6]) > 1e-9 || Math.abs(m[7]) > 1e-9))) {
     const gl = d.renderer.gl;
     const src = gl.upload(img as TexImageSource);
     const w = Math.max(1, Math.round(sw * kx));
     const h = Math.max(1, Math.round(sh * ky));
-    const inv = invert3(xf);
-    const out = gl.run(WARP_FRAG, { uTex: src, uH0: inv.slice(0, 3), uH1: inv.slice(3, 6), uH2: inv.slice(6, 9), uCrop: [(sx * kx) / img.width, (sy * ky) / img.height, (sw * kx) / img.width, (sh * ky) / img.height], uAspect: sh / sw }, gl.target(w, h));
+    const inv = invert3(m!.length === 9 ? m! : [m![0], -m![1], m![2], m![1], m![0], m![3], 0, 0, 1]);
+    const out = gl.run(
+      WARP_FRAG,
+      {
+        uTex: src,
+        uH0: inv.slice(0, 3),
+        uH1: inv.slice(3, 6),
+        uH2: inv.slice(6, 9),
+        uCrop: [(sx * kx) / img.width, (sy * ky) / img.height, (sw * kx) / img.width, (sh * ky) / img.height],
+        uAspect: sh / sw,
+        uRows: rows?.rows ?? [0, 0, 0, 0],
+        uRowAspect: rows?.aspect ?? sh / sw,
+      },
+      gl.target(w, h),
+    );
     const warped = gl.output(out);
     d.ctx.drawImage(warped, 0, 0, w, h, dx, dy, fit.width, fit.height);
     warped.close?.();
@@ -228,15 +252,14 @@ export function drawMedia(d: DrawContext, img: CanvasImageSource & { width: numb
     if (clip) d.ctx.restore();
     return;
   }
-  if (xf) {
+  if (m) {
     const cx = dx + fit.width / 2;
     const cy = dy + fit.height / 2;
     d.ctx.translate(cx, cy);
-    if (xf.length === 9) {
-      const k = 1 / xf[8];
-      d.ctx.transform(xf[0] * k, xf[3] * k, xf[1] * k, xf[4] * k, xf[2] * k * fit.width, xf[5] * k * fit.width);
-    }
-    else d.ctx.transform(xf[0], xf[1], -xf[1], xf[0], xf[2] * fit.width, xf[3] * fit.width);
+    if (m.length === 9) {
+      const k = 1 / m[8];
+      d.ctx.transform(m[0] * k, m[3] * k, m[1] * k, m[4] * k, m[2] * k * fit.width, m[5] * k * fit.width);
+    } else d.ctx.transform(m[0], m[1], -m[1], m[0], m[2] * fit.width, m[3] * fit.width);
     d.ctx.translate(-cx, -cy);
   }
   d.ctx.drawImage(img, sx * kx, sy * ky, sw * kx, sh * ky, dx, dy, fit.width, fit.height);

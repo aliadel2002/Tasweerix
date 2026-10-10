@@ -1,5 +1,5 @@
 import type { MotionData } from './motion';
-import { fromSimilarity, hcompose, H_IDENTITY, hinvert, hscale, splitHomography, toHomography, type Homography } from './homography';
+import { fromSimilarity, happly, hcompose, H_IDENTITY, hinvert, hscale, splitHomography, toHomography, type Homography } from './homography';
 import { compose, decompose, fromParams, IDENTITY, invert, type Similarity } from './similarity';
 
 export interface StabilizeOptions {
@@ -26,7 +26,17 @@ export interface StabilizeOptions {
    * homographies measured by `analyzeMotion({ model: 'perspective' })`.
    */
   model?: 'similarity' | 'perspective';
+  /**
+   * Rolling-shutter correction: the sensor's readout time as a fraction of the frame interval
+   * (0 = global shutter, typical phones 0.3–0.9), or 'auto' to estimate it from motion analysed
+   * with `analyzeMotion({ rollingShutter: true })`. Removes the skew of fast pans and the jello
+   * wobble of handheld shake. Off by default.
+   */
+  rollingShutter?: number | 'auto';
 }
+
+/** Per-frame row displacement [a1x, a1y, a2x, a2y]: rows shift by a1·s + a2·s² (s = row offset from the center, in frame heights). */
+export type RowShift = [number, number, number, number];
 
 /** Per-frame corrections to apply to a clip, in normalized coordinates (see `correctionAt`). */
 export interface StabilizeData {
@@ -41,6 +51,23 @@ export interface StabilizeData {
    * widths. The zoom is included.
    */
   frames: (Similarity | Homography)[];
+  /**
+   * Rolling-shutter correction, when enabled: per frame, how far each row was displaced by the
+   * camera moving while the rows were read (frame widths). It is removed before `frames` applies.
+   */
+  rows?: RowShift[];
+  /** Readout time used for `rows` (fraction of the frame interval). */
+  readout?: number;
+}
+
+/**
+ * A media transform with a rolling-shutter row correction: frame point p is first moved to
+ * p − (a1·s + a2·s²) with s = p.y / aspect, then mapped by `matrix`.
+ */
+export interface RowCorrectedTransform {
+  matrix: Similarity | Homography;
+  rows: RowShift;
+  aspect: number;
 }
 
 /** Gaussian smoothing that renormalizes weights at the edges (no reflection artifacts). */
@@ -110,25 +137,27 @@ function partialH(c: Homography, t: number, aspect: number): Homography {
 }
 
 /** Hides moving edges: partial corrections where `maxZoom` is not enough, then the common zoom. */
-function cropCorrections<T extends Similarity | Homography>(corrections: T[], aspect: number, o: StabilizeOptions, blend: (c: T, t: number) => T): { corrections: T[]; zoom: number } {
+function cropCorrections<T extends Similarity | Homography>(corrections: T[], aspect: number, o: StabilizeOptions, blend: (c: T, t: number) => T, pre?: Homography[]): { corrections: T[]; zoom: number } {
+  // The rolling-shutter shear (when corrected) moves the edges too.
+  const cover = (c: T, i: number) => zoomToCover(pre ? hcompose(toHomography(c), pre[i]!) : c, aspect);
   let zoom = 1;
   const crop = o.crop ?? 'auto';
   if (typeof crop === 'number') zoom = Math.max(0.1, crop);
   else if (crop === 'auto') {
     const maxZoom = o.maxZoom ?? 1.3;
     // Frames whose shake is too large to hide within maxZoom get a partial correction.
-    corrections = corrections.map((c) => {
-      if (zoomToCover(c, aspect) <= maxZoom) return c;
+    corrections = corrections.map((c, i) => {
+      if (cover(c, i) <= maxZoom) return c;
       let lo = 0;
       let hi = 1;
       for (let k = 0; k < 20; k++) {
         const mid = (lo + hi) / 2;
-        if (zoomToCover(blend(c, mid), aspect) <= maxZoom) lo = mid;
+        if (cover(blend(c, mid), i) <= maxZoom) lo = mid;
         else hi = mid;
       }
       return blend(c, lo);
     });
-    zoom = Math.min(maxZoom, Math.max(1, ...corrections.map((c) => zoomToCover(c, aspect))));
+    zoom = Math.min(maxZoom, Math.max(1, ...corrections.map(cover)));
   }
   return { corrections, zoom };
 }
@@ -151,6 +180,62 @@ function targetPath(path: Similarity[], fps: number, o: StabilizeOptions): Simil
   const ta = target(params.map((p) => p.angle), o.rotation !== false);
   const ts = target(params.map((p) => p.logScale), o.scale !== false);
   return path.map((_, i) => fromParams(tx[i]!, ty[i]!, ta[i]!, ts[i]!));
+}
+
+/**
+ * Estimates the rolling-shutter readout time (fraction of the frame interval, 0–1) from motion
+ * analysed with `rollingShutter: true`. When the camera's speed changes, rows read later move
+ * further between frames: the measured shear w_i ≈ r · (v_{i+1} − v_{i−1}) / 2, solved for r by
+ * least squares. Returns 0 when the clip has no shear data or too little change of motion.
+ */
+export function estimateReadout(m: MotionData): number {
+  if (!m.shear) return 0;
+  let num = 0;
+  let den = 0;
+  for (let i = 2; i < m.motions.length - 1; i++) {
+    if (!m.inliers[i] || !m.inliers[i - 1] || !m.inliers[i + 1]) continue;
+    const gx = (m.motions[i + 1]![2] - m.motions[i - 1]![2]) / 2;
+    const gy = (m.motions[i + 1]![3] - m.motions[i - 1]![3]) / 2;
+    num += m.shear[i]![0] * gx + m.shear[i]![1] * gy;
+    den += gx * gx + gy * gy;
+  }
+  // Below ~0.5 px/frame of total speed change the estimate is noise, and so is the shear.
+  if (den < 0.25 * Math.max(1, m.motions.length / 30)) return 0;
+  return Math.min(1, Math.max(0, num / den));
+}
+
+/**
+ * Per-frame row displacement for a readout time `r`: with v_k the motion between frames k−1 and k,
+ * the image velocity around frame i goes linearly from v_i to v_{i+1}, so a row read r·s frames
+ * after the center row is displaced by r·s·(v_i + v_{i+1})/2 + (r·s)²·(v_{i+1} − v_i)/2.
+ */
+export function rowShifts(m: MotionData, r: number): RowShift[] {
+  const n = m.motions.length;
+  const W = m.width;
+  const v = (k: number): [number, number] => {
+    const f = m.motions[Math.min(n - 1, Math.max(1, k))];
+    return f && n > 1 ? [f[2] / W, f[3] / W] : [0, 0];
+  };
+  return m.motions.map((_, i) => {
+    const a = v(i);
+    const b = v(i + 1);
+    return [(r * (a[0] + b[0])) / 2, (r * (a[1] + b[1])) / 2, (r * r * (b[0] - a[0])) / 2, (r * r * (b[1] - a[1])) / 2];
+  });
+}
+
+/** The linear (shear) part of a row correction as a homography, for edge cropping. */
+function rowShear(d: RowShift, aspect: number): Homography {
+  return [1, -d[0] / aspect, 0, 0, 1 - d[1] / aspect, 0, 0, 0, 1];
+}
+
+function readoutOf(m: MotionData, o: StabilizeOptions): number {
+  const r = o.rollingShutter;
+  if (r === undefined || r === 0) return 0;
+  if (r === 'auto') {
+    if (!m.shear) throw new Error("computeStabilization: rollingShutter 'auto' needs motion analysed with analyzeMotion({ rollingShutter: true })");
+    return estimateReadout(m);
+  }
+  return Math.min(2, Math.max(0, r));
 }
 
 /**
@@ -180,9 +265,16 @@ function computePerspective(m: MotionData, o: StabilizeOptions): StabilizeData {
     return o.mode === 'lock' ? v.map(() => mean(v)) : smooth(v, sigma);
   });
   const corrections = path.map((p, i) => hcompose(hcompose(fromSimilarity(sims[i]!), residualTarget.map((v) => v[i]!) as Homography), hinvert(p)));
-  const r = cropCorrections(corrections, aspect, o, (c, t) => partialH(c, t, aspect));
+  const readout = readoutOf(m, o);
+  const rows = readout > 0 ? rowShifts(m, readout) : undefined;
+  const r = cropCorrections(corrections, aspect, o, (c, t) => partialH(c, t, aspect), rows?.map((d) => rowShear(d, aspect)));
   const z = fromSimilarity([r.zoom, 0, 0, 0]);
-  return { fps: m.fps, start: m.start, aspect, zoom: +r.zoom.toFixed(4), frames: r.corrections.map((c) => hcompose(z, c).map((x) => +x.toFixed(7)) as Homography) };
+  return withRows({ fps: m.fps, start: m.start, aspect, zoom: +r.zoom.toFixed(4), frames: r.corrections.map((c) => hcompose(z, c).map((x) => +x.toFixed(7)) as Homography) }, rows, readout);
+}
+
+function withRows(d: StabilizeData, rows: RowShift[] | undefined, readout: number): StabilizeData {
+  if (!rows) return d;
+  return { ...d, readout: +readout.toFixed(4), rows: rows.map((v) => v.map((x) => +x.toFixed(7)) as RowShift) };
 }
 
 /**
@@ -206,27 +298,40 @@ export function computeStabilization(m: MotionData, o: StabilizeOptions = {}): S
   }
   const aspect = m.height / m.width;
   const targets = targetPath(path, m.fps, o);
+  const readout = readoutOf(m, o);
+  const rows = readout > 0 ? rowShifts(m, readout) : undefined;
   const r = cropCorrections(
     path.map((p, i) => compose(targets[i]!, invert(p))),
     aspect,
     o,
     partial,
+    rows?.map((d) => rowShear(d, aspect)),
   );
   const z: Similarity = [r.zoom, 0, 0, 0];
   const r6 = (x: number) => +x.toFixed(6);
-  return { fps: m.fps, start: m.start, aspect, zoom: +r.zoom.toFixed(4), frames: r.corrections.map((c) => compose(z, c).map(r6) as Similarity) };
+  return withRows({ fps: m.fps, start: m.start, aspect, zoom: +r.zoom.toFixed(4), frames: r.corrections.map((c) => compose(z, c).map(r6) as Similarity) }, rows, readout);
 }
 
 /** Correction at a source time (linear interpolation between frames, held at the ends). */
-export function correctionAt(d: StabilizeData, sourceTime: number): Similarity | Homography {
+export function correctionAt(d: StabilizeData, sourceTime: number): Similarity | Homography | RowCorrectedTransform {
   const n = d.frames.length;
   if (!n) return IDENTITY;
   const f = Math.min(n - 1, Math.max(0, (sourceTime - d.start) * d.fps));
   const i = Math.floor(f);
   const t = f - i;
-  const a = d.frames[i]!;
-  const b = d.frames[Math.min(n - 1, i + 1)]!;
-  return t < 1e-6 ? a : (a.map((v, k) => v + (b[k]! - v) * t) as Similarity | Homography);
+  const j = Math.min(n - 1, i + 1);
+  const lerp = <T extends number[]>(a: T, b: T): T => (t < 1e-6 ? a : (a.map((v, k) => v + (b[k]! - v) * t) as T));
+  const matrix = lerp(d.frames[i]!, d.frames[j]!);
+  if (!d.rows) return matrix;
+  return { matrix, rows: lerp(d.rows[i]!, d.rows[j]!), aspect: d.aspect };
+}
+
+/** Maps a frame point (centered, frame widths) through any media transform. */
+export function applyMediaTransform(xf: Similarity | Homography | RowCorrectedTransform, p: [number, number]): [number, number] {
+  if (Array.isArray(xf)) return happly(toHomography(xf), p);
+  const s = p[1] / xf.aspect;
+  const r = xf.rows;
+  return happly(toHomography(xf.matrix), [p[0] - r[0] * s - r[2] * s * s, p[1] - r[1] * s - r[3] * s * s]);
 }
 
 /** Shake statistics of measured motion (pixels at analysis resolution, degrees). */

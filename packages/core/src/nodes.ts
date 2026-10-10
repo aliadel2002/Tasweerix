@@ -308,7 +308,16 @@ export function image(src: string, opts?: AnimProps<ImageProps & BaseProps> & No
 }
 
 /** See `VideoNode.mediaTransform`. */
-export type MediaTransform = [number, number, number, number] | [number, number, number, number, number, number, number, number, number];
+export type MediaTransform =
+  | [number, number, number, number]
+  | [number, number, number, number, number, number, number, number, number]
+  | {
+      matrix: [number, number, number, number] | [number, number, number, number, number, number, number, number, number];
+      /** Rolling-shutter row shift [a1x, a1y, a2x, a2y]: p − (a1·s + a2·s²) with s = p.y / aspect, before `matrix`. */
+      rows: [number, number, number, number];
+      /** Frame height / width. */
+      aspect: number;
+    };
 
 export interface VideoProps extends ImageProps {
   volume: number;
@@ -331,7 +340,8 @@ export class VideoNode extends SceneNode<VideoProps> {
    * Extra transform of the picture inside its box at a source time (stabilization, reframing):
    * maps frame coordinates — centered, in frame widths — to displayed ones. Either a similarity
    * [a, b, tx, ty] (x' = a·x − b·y + tx, y' = b·x + a·y + ty) or a row-major 3 × 3 homography
-   * (9 numbers) for perspective corrections. The result is clipped to the box.
+   * (9 numbers) for perspective corrections, optionally with a rolling-shutter row correction
+   * applied first. The result is clipped to the box.
    */
   mediaTransform?: (sourceTime: number) => MediaTransform | null | undefined;
   override defaults() {
