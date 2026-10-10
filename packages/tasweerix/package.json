@@ -13,6 +13,7 @@
     "@tasweerix/core": "workspace:*",
     "@tasweerix/render": "workspace:*",
     "@tasweerix/media": "workspace:*",
-    "@tasweerix/audio": "workspace:*"
+    "@tasweerix/audio": "workspace:*",
+    "@tasweerix/image": "workspace:*"
   }
 }

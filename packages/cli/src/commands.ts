@@ -1,9 +1,10 @@
 import type { Command } from 'commander';
-import { mkdirSync, writeFileSync } from 'node:fs';
-import { dirname, extname, resolve } from 'node:path';
+import { mkdirSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import { basename, dirname, extname, join, relative, resolve } from 'node:path';
 import { decodePcm, FFMPEG, run } from '@tasweerix/media/node';
 import { detectBeats, detectSilence, encodeWav, integratedLoudness, renderMix, truePeakDb } from '@tasweerix/audio';
 import { loadComposition } from './project';
+import { render } from './render';
 
 const parseProps = (s?: string) => (s ? (JSON.parse(s) as Record<string, unknown>) : undefined);
 
@@ -62,6 +63,30 @@ export function registerCommands(program: Command): void {
     });
 
   program
+    .command('batch')
+    .description('Apply one edit script to many files: renders the entry once per input with props { src, name, index }')
+    .argument('<entry>')
+    .requiredOption('-i, --input <pattern>', 'input directory or glob (e.g. "photos/*.jpg")')
+    .option('-o, --out <dir>', 'output directory', 'out/batch')
+    .option('-f, --format <ext>', 'output extension (png, jpg, webp, avif, mp4 …)', 'jpg')
+    .option('--root <dir>', 'asset root (defaults to the current directory)')
+    .option('--props <json>', 'extra props merged into each render')
+    .action(async (entry: string, o) => {
+      const files = expandInputs(o.input);
+      if (!files.length) throw new Error(`No inputs match ${o.input}`);
+      const root = resolve(o.root ?? process.cwd());
+      mkdirSync(resolve(o.out), { recursive: true });
+      const extra = parseProps(o.props) ?? {};
+      for (const [index, file] of files.entries()) {
+        const name = basename(file, extname(file));
+        const output = join(resolve(o.out), `${name}.${o.format}`);
+        const isVideo = ['mp4', 'mov', 'webm', 'gif'].includes(o.format);
+        const res = await render({ entry, output, root, props: { ...extra, src: relative(root, file), name, index }, still: isVideo ? undefined : 0 });
+        console.error(`✔ [${index + 1}/${files.length}] ${res.output}`);
+      }
+    });
+
+  program
     .command('inspect')
     .description('Print the composition tree as JSON (timing, props, audio)')
     .argument('<entry>')
@@ -89,4 +114,17 @@ export async function writeAudio(path: string, wav: Uint8Array): Promise<void> {
     '.opus': ['-c:a', 'libopus', '-b:a', '160k'],
   };
   await run(FFMPEG, ['-y', '-v', 'error', '-f', 'wav', '-i', '-', ...(codec[ext] ?? []), path], Buffer.from(wav));
+}
+
+/** Expands a directory or a simple glob (wildcards in the file name part). */
+export function expandInputs(pattern: string): string[] {
+  const full = resolve(pattern);
+  try {
+    if (statSync(full).isDirectory()) return readdirSync(full).filter((f) => !f.startsWith('.')).map((f) => join(full, f)).filter((f) => statSync(f).isFile()).sort();
+  } catch {
+    /* not a directory */
+  }
+  const dir = dirname(full);
+  const re = new RegExp(`^${basename(full).replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.')}$`, 'i');
+  return readdirSync(dir).filter((f) => re.test(f)).map((f) => join(dir, f)).sort();
 }

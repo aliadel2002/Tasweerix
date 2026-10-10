@@ -1,0 +1,1 @@
+{ "name": "example-photo-retouch", "private": true, "type": "module", "dependencies": { "tasweerix": "workspace:*" } }

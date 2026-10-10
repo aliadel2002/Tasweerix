@@ -38,6 +38,8 @@ export interface DrawerOptions {
   drawsChildren?: boolean;
   /** Extra prefetch for nodes that need async resources per frame. */
   collect?(node: SceneNode<any>, local: FrameContext, renderer: Renderer): Promise<void> | void;
+  /** One-time async preparation before the first frame (fonts, processed images …). */
+  prepare?(node: SceneNode<any>, renderer: Renderer): Promise<void>;
 }
 
 export type Drawer = (d: DrawContext) => void;
@@ -127,8 +129,7 @@ export class Renderer {
           if (impl?.prepare) tasks.push(impl.prepare(staticParams(f, ctx0), this.assets));
         }
         const d = drawers.get(n.kind);
-        const prep = (d?.opts as { prepare?: (n: SceneNode, r: Renderer) => Promise<void> } | undefined)?.prepare;
-        if (prep) tasks.push(prep(n, this));
+        if (d?.opts.prepare) tasks.push(d.opts.prepare(n, this));
         return undefined;
       });
     visit(comp.root);

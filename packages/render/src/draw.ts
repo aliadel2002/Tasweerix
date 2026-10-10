@@ -158,7 +158,7 @@ registerDrawer('group', (d) => {
 
 // ------------------------------------------------------------ media
 
-function drawMedia(d: DrawContext, img: CanvasImageSource & { width: number; height: number }, natW: number, natH: number) {
+export function drawMedia(d: DrawContext, img: CanvasImageSource & { width: number; height: number }, natW: number, natH: number) {
   const crop = d.props.crop as Rect | null;
   const sx = crop?.x ?? 0;
   const sy = crop?.y ?? 0;
@@ -307,7 +307,8 @@ registerDrawer(
   },
   {
     // Fonts given as files are registered before the first frame.
-    prepare: async (node: TextNode, renderer: Renderer) => {
+    prepare: async (n, renderer) => {
+      const node = n as TextNode;
       const font = node.props.font;
       const fonts = new Set<string>();
       if (typeof font === 'string') fonts.add(font);
@@ -315,7 +316,7 @@ registerDrawer(
         if (FONT_FILE_RE.test(f) && !fontFamilies.has(f)) fontFamilies.set(f, await renderer.assets.loadFont(f));
       }
     },
-  } as never,
+  },
 );
 
 // ------------------------------------------------------------ transitions
