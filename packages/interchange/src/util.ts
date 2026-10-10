@@ -11,8 +11,12 @@ export const isAudioPath = (p: string): boolean => AUDIO_RE.test(p);
 export function urlToPath(url: string): string {
   if (!url) return url;
   if (/^file:/i.test(url)) {
-    let p = decodeURIComponent(url.replace(/^file:(\/\/localhost)?\/\//i, '').replace(/^file:/i, ''));
-    // file:///C:/x → C:/x
+    let p = url.replace(/^file:/i, '');
+    // file:///x and file://localhost/x are local; file://server/share/x is a UNC path.
+    const host = /^\/\/([^/]*)/.exec(p);
+    if (host) p = !host[1] || /^localhost$/i.test(host[1]) ? p.slice(2 + host[1]!.length) : `//${host[1]}${p.slice(2 + host[1]!.length)}`;
+    p = decodeURIComponent(p);
+    // file:///C:/x → C:/x (Premiere on Windows writes file://localhost/C%3a/x)
     if (/^\/[A-Za-z]:\//.test(p)) p = p.slice(1);
     return p;
   }
@@ -72,6 +76,25 @@ export function applyTransition(clips: PlacedClip[], t: TransitionMark): boolean
     return true;
   }
   return false;
+}
+
+/**
+ * A transition at the head or tail of a run of clips (nothing on the other side) fades the clip in
+ * from, or out to, nothing. It becomes opacity keyframes on that clip; sound is left as is.
+ */
+export function applyEdgeFade(clips: PlacedClip[], t: TransitionMark): boolean {
+  const near = (x: number, y: number) => Math.abs(x - y) < 1e-3;
+  const lane = clips.filter((c) => c.lane === t.lane && c.kind !== 'audio');
+  const head = lane.find((c) => near(c.start, t.start) && !lane.some((o) => near(o.start + o.duration, c.start)));
+  const tail = lane.find((c) => near(c.start + c.duration, t.end) && !lane.some((o) => o !== c && near(o.start, t.end)));
+  const clip = head ?? tail;
+  if (!clip || t.end <= t.start) return false;
+  const prior = clip.transform?.opacity;
+  if (prior !== undefined && typeof prior !== 'number') return false;
+  const o = prior ?? 1;
+  const keys = head ? [{ t: t.start, v: 0 }, { t: t.end, v: o }] : [{ t: t.start, v: o }, { t: t.end, v: 0 }];
+  clip.transform = { ...clip.transform, opacity: keys };
+  return true;
 }
 
 /** Maps editor transition names to Tasweerix transition kinds. */

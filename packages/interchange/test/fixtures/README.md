@@ -15,3 +15,4 @@
 - `effects.fcpxml` and `effects.xml` add effects and color corrections (with keyframes), an effect
   without a Tasweerix counterpart, and multicam clips (FCPXML `mc-clip` with separate video and
   audio angles, FCP7 `multiclip`).
+- `real/` holds unchanged exports from Final Cut Pro, Premiere Pro and Nuke Studio (see `real/README.md`).

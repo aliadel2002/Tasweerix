@@ -104,13 +104,16 @@ c.add(await importTimeline('edits/rough-cut.fcpxml', { mediaDir: 'footage' }));
 
 | Format | Read | Write | Notes |
 | --- | --- | --- | --- |
-| FCPXML 1.6–1.11 (`.fcpxml`) | ✓ | ✓ | Spines, connected clips and secondary storylines, compound clips, transitions, retimes, volume, titles, markers |
+| FCPXML 1.6–1.13 (`.fcpxml`) | ✓ | ✓ | Spines, connected clips and secondary storylines, compound, sync and multicam clips, auditions (active pick), transitions, retimes, frame rate conforms, volume, titles, markers; a clip or compound clip exported on its own |
 | OpenTimelineIO (`.otio`) | ✓ | ✓ | Tracks, gaps, transitions, LinearTimeWarp and FreezeFrame, nested stacks, markers |
-| FCP7 XML / xmeml (`.xml`) | ✓ | ✓ | Premiere Pro's exchange format: clip items, transitions, Time Remap, audio levels, text generators |
+| FCP7 XML / xmeml (`.xml`) | ✓ | ✓ | Premiere Pro's exchange format: clip items, transitions, nested sequences, stereo clips on exploded tracks, Time Remap, audio levels, text generators |
 | CMX 3600 EDL (`.edl`) | ✓ | ✓ | Cuts, dissolves and wipes, M2 speed, clip-name comments, LOC markers; pass `--fps` (EDLs store none) |
 
-The readers are tested against files written by OpenTimelineIO's own adapters, and the writers'
-output is read back by them. Plugins can add formats through `importers` and `exporters` (see
+The readers are tested against unchanged exports from Final Cut Pro 10.4 – 11, Premiere Pro and Nuke
+Studio (marker positions are checked against where Final Cut itself shows them, to 1/80 frame) and
+against files written by OpenTimelineIO's own adapters, and the writers' output is read back by
+them. Transitions at the head or tail of a run of clips become opacity fades; synthetic media
+(slugs, bars, mattes, Final Cut generators) and offline clips are listed as not imported. Plugins can add formats through `importers` and `exporters` (see
 [Plugins](plugins.md)); the API is `readTimeline()`, `writeTimeline()`, `timelineToCode()` and
 `timelineToNodes()` in `@tasweerix/interchange`.
 
