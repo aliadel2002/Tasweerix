@@ -1,6 +1,6 @@
 # Publishing Tasweerix packages
 
-All 16 `packages/*` (the `tasweerix` umbrella and the `@tasweerix/*` packages) publish to npm. This doc covers how the
+All 17 `packages/*` (the `tasweerix` umbrella and the `@tasweerix/*` packages) publish to npm. This doc covers how the
 build works and the release workflow.
 
 ## How it works
@@ -23,6 +23,8 @@ build works and the release workflow.
   `harfbuzzjs` on disk).
 - **`@tasweerix/cli`** publishes `bin` as `dist/main.js` and ships `src/runtime/` (the export and preview page runtimes
   it bundles with each user project) and `dist/studio/` (the studio UI, prebuilt from `apps/studio`).
+- **`@tasweerix/mcp`** publishes `bin` as `dist/main.js`. It runs the project's own `@tasweerix/cli` when the project
+  has one, else the version it depends on.
 - **`@tasweerix/ai`** ships a copy of `docs/*.md` (made by its build) because the assistant sends the API docs as
   context.
 - **The native plugin host is not published.** `native/plugin-host` is platform-specific and opt-in

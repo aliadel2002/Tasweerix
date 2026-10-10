@@ -217,6 +217,17 @@ export function registerCommands(program: Command): void {
     });
 
   program
+    .command('doctor')
+    .description('Check FFmpeg, Chromium and the optional tools (LibRaw, whisper.cpp, AI credentials, audio plugin hosts)')
+    .option('--json', 'machine-readable output')
+    .action(async (o) => {
+      const { runDoctor, formatDoctor } = await import('./doctor');
+      const checks = runDoctor();
+      console.log(o.json ? JSON.stringify(checks, null, 2) : formatDoctor(checks));
+      if (checks.some((c) => c.required && !c.ok)) process.exitCode = 1;
+    });
+
+  program
     .command('audio-plugins')
     .description('List installed VST3, CLAP, AU, LV2 and LADSPA plugins and which formats can be hosted')
     .option('-f, --format <formats>', `comma-separated formats (${PLUGIN_FORMATS.join(', ')})`)

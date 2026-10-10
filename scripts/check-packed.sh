@@ -40,6 +40,19 @@ npx tasweerix still hello.ts -f 45 -o hello.png
 npx tasweerix svg poster.ts -o poster.svg
 npx tasweerix audio beat.ts -o beat.wav
 
+echo "Checking the MCP server"
+node --input-type=module -e '
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+const client = new Client({ name: "packed-check", version: "0" });
+await client.connect(new StdioClientTransport({ command: "node_modules/.bin/tasweerix-mcp" }));
+const docs = await client.callTool({ name: "read_docs", arguments: { topic: "guide" } });
+if (!docs.content[0].text.includes("# Guide")) throw new Error("read_docs returned no guide");
+const still = await client.callTool({ name: "render_still", arguments: { entry: "hello.ts", frame: 45, output: "mcp.png" } });
+if (still.isError || !still.content.some((c) => c.type === "image")) throw new Error(`render_still failed: ${JSON.stringify(still.content)}`);
+await client.close();
+console.log("✔ MCP server reads the docs and renders a frame");'
+
 echo "Starting the studio"
 node_modules/.bin/tasweerix studio . --entry hello.ts --port 4873 > studio.log 2>&1 &
 for _ in $(seq 60); do curl -sf http://127.0.0.1:4873/studio.js -o studio.js && break; sleep 1; done
