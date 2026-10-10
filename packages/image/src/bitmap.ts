@@ -30,10 +30,29 @@ export function fromRGBA8(data: Uint8ClampedArray | Uint8Array, width: number, h
   return { width, height, data: out };
 }
 
-export function toRGBA8(b: Bitmap): Uint8ClampedArray {
+/**
+ * Converts to 8-bit RGBA. Color channels get deterministic triangular (TPDF) dither of ±1 LSB by
+ * default, which hides banding in smooth gradients; exact 0 and 1 and the alpha channel stay exact.
+ */
+export function toRGBA8(b: Bitmap, opts: { dither?: boolean } = {}): Uint8ClampedArray {
+  const dither = opts.dither ?? true;
   const out = new Uint8ClampedArray(b.width * b.height * 4);
-  for (let i = 0; i < out.length; i++) out[i] = Math.round(Math.min(1, Math.max(0, b.data[i]!)) * 255);
+  for (let i = 0; i < out.length; i++) {
+    const v = Math.min(1, Math.max(0, b.data[i]!));
+    const noise = dither && (i & 3) !== 3 && v > 0 && v < 1 ? (hash32(i) - hash32(i ^ 0x9e3779b9)) / 4294967296 : 0;
+    out[i] = Math.round(v * 255 + noise);
+  }
   return out;
+}
+
+/** Integer hash (lowbias32) → 0..2^32-1. */
+function hash32(n: number): number {
+  n ^= n >>> 16;
+  n = Math.imul(n, 0x7feb352d);
+  n ^= n >>> 15;
+  n = Math.imul(n, 0x846ca68b);
+  n ^= n >>> 16;
+  return n >>> 0;
 }
 
 export function cloneBitmap(b: Bitmap): Bitmap {

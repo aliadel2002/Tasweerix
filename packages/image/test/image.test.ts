@@ -2,7 +2,7 @@ import { describe, expect, it, afterAll } from 'vitest';
 import { join } from 'node:path';
 import { mkdirSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
-import { adjust, applyOps, autoLevels, autoWhiteBalance, createBitmap, crop, curves, heal, histogram, mask, op, perspective, resize, resolveMask, rotate, type Bitmap } from '../src';
+import { adjust, applyOps, autoLevels, autoWhiteBalance, createBitmap, crop, curves, heal, histogram, mask, op, perspective, resize, resolveMask, rotate, toRGBA8, type Bitmap } from '../src';
 import { closeTestBrowser, renderFrames } from '../../cli/src/testing';
 
 const px = (b: Bitmap, x: number, y: number) => Array.from(b.data.subarray((y * b.width + x) * 4, (y * b.width + x) * 4 + 4));
@@ -60,6 +60,48 @@ describe('tone', () => {
     const h = histogram(createBitmap(8, 8, [1, 0, 0, 1]));
     expect(h.count).toBe(64);
     expect(h.r[255]).toBe(64);
+  });
+});
+
+describe('bit depth', () => {
+  // A dark gradient spanning only ~10 8-bit levels, stretched 8x by a curve: the shadow-lift case.
+  const ramp = () => {
+    const b = createBitmap(1024, 1);
+    for (let x = 0; x < 1024; x++) b.data.set([(x / 1023) * 0.04, (x / 1023) * 0.04, (x / 1023) * 0.04, 1], x * 4);
+    return b;
+  };
+  it('curves interpolate instead of snapping to 256 levels', () => {
+    const out = curves(ramp(), { rgb: [[0, 0], [0.04, 0.32], [1, 1]] });
+    const levels = new Set<number>();
+    for (let x = 0; x < 1024; x++) levels.add(out.data[x * 4]!);
+    expect(levels.size).toBeGreaterThan(500);
+    for (let x = 1; x < 1024; x++) expect(out.data[x * 4]!).toBeGreaterThanOrEqual(out.data[(x - 1) * 4]! - 1e-6);
+  });
+  it('toRGBA8 dithers gradients but keeps exact values and alpha', () => {
+    // A sky-like gradient spanning 4 levels over 1024 px: rounding makes 256 px wide flat bands.
+    const lifted = createBitmap(1024, 1);
+    for (let x = 0; x < 1024; x++) lifted.data.set([0.5 + (x / 1023) * (4 / 255), 0.5, 0.5, 1], x * 4);
+    // Banding = local averages that sit off the true value. Box-average 32 px and compare with the float
+    // ramp: plain rounding leaves a systematic step error, dither averages it out.
+    const bandError = (d: Uint8ClampedArray) => {
+      let err = 0;
+      for (let x = 16; x < 1008; x++) {
+        let sum = 0, ref = 0;
+        for (let k = -16; k < 16; k++) (sum += d[(x + k) * 4]!), (ref += lifted.data[(x + k) * 4]! * 255);
+        err += Math.abs(sum - ref) / 32;
+      }
+      return err / 992;
+    };
+    const plainErr = bandError(toRGBA8(lifted, { dither: false }));
+    const ditherErr = bandError(toRGBA8(lifted));
+    expect(ditherErr).toBeLessThan(plainErr / 2);
+    // Dither stays within ±1 level and is deterministic.
+    const plain = toRGBA8(lifted, { dither: false });
+    const d = toRGBA8(lifted);
+    for (let i = 0; i < d.length; i++) expect(Math.abs(d[i]! - plain[i]!)).toBeLessThanOrEqual(1);
+    expect(toRGBA8(lifted)).toEqual(d);
+    const solid = toRGBA8(createBitmap(8, 8, [0, 1, 0, 0.5]));
+    for (let i = 0; i < solid.length; i += 4) expect(Array.from(solid.subarray(i, i + 4))).toEqual([0, 255, 0, 128]);
   });
 });
 
