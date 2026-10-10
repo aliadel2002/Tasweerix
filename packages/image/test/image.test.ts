@@ -105,6 +105,29 @@ describe('bit depth', () => {
   });
 });
 
+describe('headroom', () => {
+  const bright = () => {
+    const b = createBitmap(64, 1);
+    for (let x = 0; x < 64; x++) b.data.set([0.6 + (x / 63) * 0.3, 0.5, 0.4, 1], x * 4);
+    return b;
+  };
+  it('a later op recovers highlights an earlier op pushed past white', () => {
+    const src = bright();
+    const out = applyOps(src, [op.adjust({ exposure: 1 }), op.sharpen(), op.clarity(0.2), op.curves({ r: [[0, 0], [1, 1]] }), op.adjust({ exposure: -1 })]);
+    // Without headroom every pixel would clip to 1 after +1 EV and come back as one flat value.
+    const reds = new Set<number>();
+    for (let x = 0; x < 64; x++) reds.add(+out.data[x * 4]!.toFixed(3));
+    expect(reds.size).toBeGreaterThan(50);
+    expect(out.data[63 * 4]!).toBeCloseTo(0.9, 1);
+  });
+  it('keeps values above 1 between ops but clips them at the 8-bit output', () => {
+    const over = adjust(bright(), { exposure: 1 });
+    expect(Math.max(...Array.from(over.data))).toBeGreaterThan(1.2);
+    expect(Math.min(...Array.from(over.data))).toBeGreaterThanOrEqual(0);
+    expect(Math.max(...toRGBA8(over))).toBe(255);
+  });
+});
+
 describe('selections & retouch', () => {
   it('magic wand selects only the contiguous region', () => {
     const b = createBitmap(10, 10, [1, 1, 1, 1]);
