@@ -198,10 +198,10 @@ export class GLPipeline {
   }
 
   /**
-   * Uploads a canvas / image / bitmap as a texture for filters to read: half float when compositing
-   * at 16 bits (float16 canvases), else RGBA8, which loses nothing for 8-bit sources. This skips the
-   * copy into a pooled float target (one full-frame pass fewer, which matters on software GL). The
-   * result has no framebuffer: read it, don't render into it.
+   * Uploads a canvas / image / bitmap as an RGBA8 texture for filters to read (RGBA16F when
+   * compositing at 16 bits, so float16 canvases keep their depth). 8-bit sources lose
+   * nothing at RGBA8, so this skips the copy into a pooled float target (one full-frame pass fewer,
+   * which matters on software GL). The result has no framebuffer: read it, don't render into it.
    */
   upload(src: TexImageSource, width?: number, height?: number): Tex {
     const gl = this.gl;
