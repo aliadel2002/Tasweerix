@@ -189,6 +189,18 @@ export function registerCommands(program: Command): void {
     });
 
   program
+    .command('init')
+    .description('Create a new project from a template')
+    .argument('[dir]', 'project directory', 'my-tasweerix-project')
+    .option('-t, --template <name>', 'video | photo | audio | motion | arabic', 'video')
+    .action(async (dir: string, o) => {
+      const { scaffold } = await import('./templates');
+      const files = scaffold(resolve(dir), o.template);
+      console.error(`✔ Created ${dir} (${o.template}): ${files.join(', ')}`);
+      console.error(`  Next: tasweerix studio ${dir}    or    tasweerix render ${dir}/index.ts -o ${dir}/out/video.mp4`);
+    });
+
+  program
     .command('inspect')
     .description('Print the composition tree as JSON (timing, props, audio)')
     .argument('<entry>')

@@ -2,7 +2,7 @@
   "name": "tasweerix-monorepo",
   "private": true,
   "type": "module",
-  "description": "Tasweerix — a code-first engine for video, audio, photo, motion graphics and illustration.",
+  "description": "Tasweerix \u2014 a code-first engine for video, audio, photo, motion graphics and illustration.",
   "license": "MIT",
   "packageManager": "pnpm@10.28.0",
   "engines": {
@@ -14,7 +14,8 @@
     "test:browser": "vitest run --config vitest.browser.config.ts",
     "tasweerix": "node packages/cli/bin/tasweerix.mjs",
     "studio": "node packages/cli/bin/tasweerix.mjs studio examples/promo",
-    "format": "prettier --write ."
+    "format": "prettier --write .",
+    "examples": "bash scripts/check-examples.sh"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

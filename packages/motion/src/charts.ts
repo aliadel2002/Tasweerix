@@ -73,7 +73,7 @@ export function pieChart(data: { label?: string; value: number }[], o: ChartOpti
     const a1 = (acc / total) * 360;
     if (o.donut) {
       const w = R * o.donut;
-      g.add(ellipse({ size: [2 * R - w, 2 * R - w], fill: null, stroke: cols[i % cols.length]!, strokeWidth: w, startAngle: a0, endAngle: a0 + 0.001, trimStart: 0, trimEnd: 1 }).set({ endAngle: (f) => a0 + (a1 - a0) * p(f.time) }));
+      g.add(ellipse({ size: [2 * R - w, 2 * R - w], fill: null, stroke: cols[i % cols.length]!, strokeWidth: w, startAngle: a0, endAngle: (f) => a0 + Math.max(0.01, (a1 - a0) * p(f.time)) }));
     } else g.add(ellipse({ size: [2 * R, 2 * R], fill: cols[i % cols.length]!, startAngle: a0, endAngle: (f) => a0 + (a1 - a0) * p(f.time) }));
   });
   return g;
@@ -81,7 +81,8 @@ export function pieChart(data: { label?: string; value: number }[], o: ChartOpti
 
 /** Animated number with formatting. */
 export function numberCounter(to: number, o: { from?: number; start?: TimeInput; duration?: TimeInput; decimals?: number; prefix?: string; suffix?: string; size?: number; fill?: string; font?: string; weight?: number } & NodeOptions = {}) {
-  return text(counter(o.from ?? 0, to, o), { size: o.size ?? 96, fill: o.fill ?? '#fff', font: o.font ?? 'sans-serif', weight: o.weight ?? 800, at: o.at, start: o.start, duration: o.duration, name: o.name });
+  // `start`/`duration` time the count; the text itself stays visible from `start` on.
+  return text(counter(o.from ?? 0, to, { ...o, start: 0 }), { size: o.size ?? 96, fill: o.fill ?? '#fff', font: o.font ?? 'sans-serif', weight: o.weight ?? 800, at: o.at, start: o.start, name: o.name });
 }
 
 /** Progress bar filling over time. */

@@ -1,1 +1,0 @@
-{ "name": "example-smoke", "private": true, "type": "module", "dependencies": { "tasweerix": "workspace:*" } }

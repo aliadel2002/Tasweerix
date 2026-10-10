@@ -1,4 +1,4 @@
-import type { Easing } from './easing';
+import { registerEasing, type Easing } from './easing';
 import { registerInterpolator, type Interpolator } from './interpolate';
 
 /**
@@ -37,6 +37,7 @@ export function usePlugin(...ps: Plugin[]): void {
     if (plugins.has(p.name)) continue;
     plugins.set(p.name, p);
     p.interpolators?.forEach(registerInterpolator);
+    for (const [name, e] of Object.entries(p.easings ?? {})) registerEasing(name, e);
     p.setup?.();
     listeners.forEach((l) => l(p));
   }

@@ -51,7 +51,8 @@ export function titleCard(title: string, o: { kicker?: string; at?: Vec2; start?
 export function callout(point: Vec2, label: string, o: { offset?: Vec2; start?: TimeInput; color?: string; font?: string; size?: number } = {}): GroupNode {
   const off = o.offset ?? [160, -100];
   const c = o.color ?? '#facc15';
-  const g = group({ start: o.start, name: 'callout' });
+  // Absolute coordinates: anchor the group at the composition origin.
+  const g = group({ start: o.start, name: 'callout', at: [0, 0] });
   const p = (t: number, d: number, len: number) => Math.min(1, Math.max(0, (t - d) / len));
   g.add(ellipse({ at: point, size: [18, 18], fill: c, scale: (f) => 1 - Math.pow(1 - p(f.time, 0, 0.3), 3) }));
   g.add(ellipse({ at: point, size: [18, 18], fill: null, stroke: c, strokeWidth: 3, scale: (f) => 1 + ((f.time * 1.2) % 1) * 2, opacity: (f) => 1 - ((f.time * 1.2) % 1) }));

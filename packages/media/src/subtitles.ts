@@ -1,4 +1,4 @@
-import { group, text, type AnimProps, type BaseProps, type GroupNode, type NodeOptions, type ShapeStyle, type TextProps } from '@tasweerix/core';
+import { group, text, type Animatable, type AnimProps, type BaseProps, type GroupNode, type NodeOptions, type ShapeStyle, type TextProps, type Vec2 } from '@tasweerix/core';
 
 export interface Cue {
   start: number;
@@ -54,16 +54,19 @@ export interface CaptionStyle extends AnimProps<TextProps & ShapeStyle & BasePro
   fade?: number;
   /** Highlight color for the active word (needs word timings). */
   highlight?: string;
+  /** Caption position (shorthand for position). */
+  at?: Animatable<Vec2>;
 }
 
 /** Builds caption text nodes from cues. */
 export function captions(cues: Cue[], style: CaptionStyle = {}, opts: NodeOptions = {}): GroupNode {
   const { fade = 0.12, highlight, ...textStyle } = style;
-  const g = group(opts);
+  // Cue positions are absolute composition coordinates, so the container sits at the origin.
+  const g = group({ at: [0, 0], ...opts });
   g.name = g.name ?? 'captions';
   for (const c of cues) {
     const dur = Math.max(0.01, c.end - c.start);
-    const t = text(c.text, { size: 54, fill: '#fff', stroke: 'rgba(0,0,0,0.85)', strokeWidth: 8, strokeFirst: true, weight: 700, maxWidth: 1500, ...textStyle } as never);
+    const t = text(c.text, { size: 54, fill: '#fff', stroke: 'rgba(0,0,0,0.85)', strokeWidth: 8, strokeFirst: true, weight: 700, maxWidth: 1500, baseline: 'bottom', ...textStyle } as never);
     t.span(c.start, dur);
     if (fade > 0) t.keys('opacity', [[0, 0], [Math.min(fade, dur / 2), 1], [Math.max(dur - fade, dur / 2), 1], [dur, 0]]);
     if (highlight && c.words?.length) {

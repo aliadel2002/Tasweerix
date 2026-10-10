@@ -60,7 +60,19 @@ importers:
         specifier: workspace:*
         version: link:../../packages/tasweerix
 
+  examples/data-viz:
+    dependencies:
+      tasweerix:
+        specifier: workspace:*
+        version: link:../../packages/tasweerix
+
   examples/generative-poster:
+    dependencies:
+      tasweerix:
+        specifier: workspace:*
+        version: link:../../packages/tasweerix
+
+  examples/hello:
     dependencies:
       tasweerix:
         specifier: workspace:*
@@ -72,13 +84,19 @@ importers:
         specifier: workspace:*
         version: link:../../packages/tasweerix
 
-  examples/smart-edit:
+  examples/podcast:
     dependencies:
       tasweerix:
         specifier: workspace:*
         version: link:../../packages/tasweerix
 
-  examples/smoke:
+  examples/promo:
+    dependencies:
+      tasweerix:
+        specifier: workspace:*
+        version: link:../../packages/tasweerix
+
+  examples/smart-edit:
     dependencies:
       tasweerix:
         specifier: workspace:*
@@ -154,7 +172,14 @@ importers:
         specifier: ^1.2.1
         version: 1.2.2
 
-  packages/core: {}
+  packages/core:
+    devDependencies:
+      '@tasweerix/audio':
+        specifier: workspace:*
+        version: link:../audio
+      '@tasweerix/render':
+        specifier: workspace:*
+        version: link:../render
 
   packages/illustrate:
     dependencies:

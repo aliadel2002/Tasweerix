@@ -347,7 +347,7 @@ export function toSVG(comp: Composition, frame = 0, opts: SvgExportOptions = {})
       case 'rect':
         return rectPath(pr.size[0], pr.size[1], pr.radius);
       case 'ellipse':
-        return ellipsePath(pr.size[0], pr.size[1], pr.startAngle, pr.endAngle);
+        return ellipsePath(pr.size[0], pr.size[1], pr.startAngle, pr.endAngle, Math.abs(pr.endAngle - pr.startAngle) >= 360 || (pr.fill !== null && pr.fill !== undefined));
       case 'polygon':
         return roundedPolygonPath(polygonPoints(pr.sides, pr.radius), pr.cornerRadius);
       case 'star':

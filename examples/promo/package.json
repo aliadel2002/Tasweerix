@@ -1,0 +1,1 @@
+{ "name": "example-promo", "private": true, "type": "module", "dependencies": { "tasweerix": "workspace:*" } }

@@ -109,7 +109,10 @@ registerDrawer('rect', (d) => {
 });
 registerDrawer('ellipse', (d) => {
   const size = d.props.size as Vec2;
-  paintShape(d, ellipsePath(size[0], size[1], d.props.startAngle, d.props.endAngle));
+  const full = Math.abs(d.props.endAngle - d.props.startAngle) >= 360 - 1e-9;
+  // Partial ellipses are pie wedges when filled, open arcs when only stroked.
+  const pie = full || isVisiblePaint(d.props.fill);
+  paintShape(d, ellipsePath(size[0], size[1], d.props.startAngle, d.props.endAngle, pie), pie);
 });
 registerDrawer('polygon', (d) => {
   paintShape(d, roundedPolygonPath(polygonPoints(d.props.sides, d.props.radius), d.props.cornerRadius));

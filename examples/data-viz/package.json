@@ -1,0 +1,1 @@
+{ "name": "example-data-viz", "private": true, "type": "module", "dependencies": { "tasweerix": "workspace:*" } }

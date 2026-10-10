@@ -193,10 +193,16 @@ export type EaseName = Exclude<
 
 export type EasingInput = Easing | EaseName;
 
-export function resolveEasing(e: EasingInput | undefined, fallback: Easing = ease.linear): Easing {
+const customEasings = new Map<string, Easing>();
+/** Registers a named easing usable anywhere an easing name is accepted. */
+export function registerEasing(name: string, e: Easing): void {
+  customEasings.set(name, e);
+}
+
+export function resolveEasing(e: EasingInput | string | undefined, fallback: Easing = ease.linear): Easing {
   if (!e) return fallback;
   if (typeof e === 'function') return e;
-  const f = (ease as Record<string, unknown>)[e];
+  const f = customEasings.get(e) ?? (ease as Record<string, unknown>)[e];
   if (typeof f !== 'function') throw new Error(`Unknown easing "${e}"`);
   return f as Easing;
 }

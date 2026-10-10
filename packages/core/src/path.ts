@@ -463,7 +463,11 @@ export function rectPath(w: number, h: number, radius: number | [number, number,
   return out;
 }
 
-export function ellipsePath(w: number, h: number, startDeg = 0, endDeg = 360): PathData {
+/**
+ * Ellipse (or arc) centered on the origin. Partial arcs are pie wedges when `pie` is true (for fills)
+ * and open arcs otherwise (for strokes, e.g. donut charts and progress rings).
+ */
+export function ellipsePath(w: number, h: number, startDeg = 0, endDeg = 360, pie = true): PathData {
   const rx = w / 2;
   const ry = h / 2;
   const full = Math.abs(endDeg - startDeg) >= 360 - 1e-9;
@@ -474,7 +478,7 @@ export function ellipsePath(w: number, h: number, startDeg = 0, endDeg = 360): P
   const k = (4 / 3) * Math.tan(step / 4);
   const pt = (a: number): Vec2 => [rx * Math.cos(a), ry * Math.sin(a)];
   const out: PathData = [];
-  if (!full) out.push({ c: 'M', p: [0, 0] }, { c: 'L', p: pt(a0) });
+  if (!full && pie) out.push({ c: 'M', p: [0, 0] }, { c: 'L', p: pt(a0) });
   else out.push({ c: 'M', p: pt(a0) });
   let a = a0;
   for (let i = 0; i < n; i++) {
@@ -489,7 +493,7 @@ export function ellipsePath(w: number, h: number, startDeg = 0, endDeg = 360): P
     });
     a = b;
   }
-  out.push({ c: 'Z' });
+  if (full || pie) out.push({ c: 'Z' });
   return out;
 }
 

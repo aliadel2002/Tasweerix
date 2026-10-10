@@ -1,3 +1,5 @@
+// The smallest useful Tasweerix project: shapes, text, a GPU transition and a glow.
+//   tasweerix render examples/hello/index.ts -o out/hello.mp4
 import { composition, ellipse, fx, gradient, keys, rect, star, text, transition, group } from 'tasweerix';
 
 export default composition({ width: 640, height: 360, fps: 30, duration: 3, background: '#0b1020' }, (c) => {
@@ -10,7 +12,5 @@ export default composition({ width: 640, height: 360, fps: 30, duration: 3, back
     star({ outerRadius: 90, innerRadius: 40, fill: '#fde047', rotation: keys([[0, 0], [2, 180]]) }),
   ).lasting(1.8);
   c.add(transition.sequence([a, b], { type: 'wipe', duration: 0.5, angle: 30 }));
-  c.add(
-    ellipse({ size: [80, 80], fill: null, stroke: '#fff', strokeWidth: 6, trimEnd: keys([[0, 0], [2, 1]]), at: [580, 300] }),
-  ).filter(fx.glow({ radius: 12, threshold: 0.3 }));
+  c.add(ellipse({ size: [80, 80], fill: null, stroke: '#fff', strokeWidth: 6, trimEnd: keys([[0, 0], [2, 1]]), at: [580, 300] })).filter(fx.glow({ radius: 12, threshold: 0.3 }));
 });
