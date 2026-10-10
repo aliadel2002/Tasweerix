@@ -3,7 +3,7 @@ import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { closeTestBrowser, renderFrames } from '../../cli/src/testing';
-import { filterKinds, transitionKinds } from '../src';
+import { filterKinds, isPointwise, transitionKinds } from '../src';
 
 const dir = join(__dirname, '.tmp');
 const close = (a: number[], b: number[], tol = 6) => a.every((v, i) => Math.abs(v - b[i]!) <= tol);
@@ -17,6 +17,14 @@ beforeAll(() => {
 afterAll(closeTestBrowser);
 
 const src = (body: string) => `import { composition, still, rect, ellipse, text, group, image, video, solid, keys, gradient, fx, transition, adjustment, comp, canvas } from 'tasweerix';\n${body}`;
+
+describe('filter pass fusion', () => {
+  it('fuses only shaders that read the input at the current pixel', () => {
+    expect(isPointwise('uniform float uA; void main(){ vec4 c = texture(uTex, vUv); outColor = vec4(c.rgb * uA, c.a); }')).toBe(true);
+    expect(isPointwise('void main(){ outColor = texture(uTex, vUv + vec2(0.01, 0.0)); }')).toBe(false);
+    expect(isPointwise('void main(){ vec4 c = texture(uTex, vUv); if (c.a < 0.5) return; outColor = c; }')).toBe(false);
+  });
+});
 
 describe('renderer (headless Chromium)', () => {
   it('draws shapes, positions and blend modes', async () => {
@@ -76,6 +84,33 @@ describe('renderer (headless Chromium)', () => {
       for (let i = 0; i < f.data.length; i += 4) sum += f.data[i]! + f.data[i + 1]! + f.data[i + 2]!;
       expect(sum).toBeGreaterThan(0);
     }
+  });
+
+  it('fuses consecutive per-pixel filters without changing the result', async () => {
+    // A zero-radius blur is an identity copy that is not per-pixel: after every filter, it makes each
+    // one run as its own pass.
+    const copy = `{ kind: 'blur', params: { radius: 0 } }`;
+    const chain = (separate: boolean) =>
+      [
+        `{ kind: 'grade', params: { contrast: 0.2, saturation: -0.3, temperature: 0.4 } }`,
+        `{ kind: 'levels', params: { gamma: 1.6 }, amount: 0.6 }`,
+        `{ kind: 'hsl', params: { hue: 40 } }`,
+        `{ kind: 'vignette', params: { amount: 0.5 } }`,
+      ]
+        .map((f) => (separate ? `${f}, ${copy}` : f))
+        .join(', ');
+    const { frames } = await renderFrames({
+      dir,
+      frames: [0, 1],
+      source: src(`export default composition({ width: 160, height: 90, fps: 10, duration: 0.2, background: '#000' }, (c) => {
+        c.add(image('image.png', { at: [80, 45], duration: 0.1 }).filter(${chain(false)}));
+        c.add(image('image.png', { at: [80, 45], start: 0.1, duration: 0.1 }).filter(${chain(true)}));
+      });`),
+    });
+    const [fused, separate] = frames as [(typeof frames)[0], (typeof frames)[0]];
+    let maxDiff = 0;
+    for (let i = 0; i < fused.data.length; i++) maxDiff = Math.max(maxDiff, Math.abs(fused.data[i]! - separate.data[i]!));
+    expect(maxDiff).toBeLessThanOrEqual(2);
   });
 
   it('runs every transition', async () => {

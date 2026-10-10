@@ -1,10 +1,10 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { availableParallelism, tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
-import type { Page } from 'playwright-core';
+import type { Browser, Page } from 'playwright-core';
 import { run, FFMPEG } from '@tasweerix/media/node';
 import { bundle } from './bundle';
-import { launchBrowser } from './browser';
+import { launchRenderBrowser, type GpuMode } from './browser';
 import { codecFromPath, FrameEncoder, type Codec } from './encode';
 import { startRenderServer } from './server';
 
@@ -21,6 +21,7 @@ export interface RenderOptions {
   scale?: number;
   /** Frame range [start, end] inclusive. */
   range?: [number, number];
+  /** Parallel browser workers (default: one per CPU core, up to 4). */
   concurrency?: number;
   /** Keep alpha channel where the codec supports it. */
   transparent?: boolean;
@@ -32,8 +33,8 @@ export interface RenderOptions {
   /** Node kinds to leave out of the render. */
   hide?: string[];
   transparentBackground?: boolean;
-  /** Compositing and frame depth: 16 keeps more than 8 bits from decode to ffmpeg. Default 8. */
-  depth?: 8 | 16;
+  /** GPU use for WebGL: 'auto' (default, or TASWEERIX_GPU) uses a hardware GPU when one answers. */
+  gpu?: GpuMode;
   onProgress?: (p: { done: number; total: number; fps: number; eta: number }) => void;
   log?: (msg: string) => void;
   /** Hook to render audio for the composition; returns a WAV path or undefined. */
@@ -82,6 +83,7 @@ export async function render(opts: RenderOptions): Promise<{ output: string; inf
   const work = mkdtempSync(join(tmpdir(), 'tasweerix-render-'));
   const encoders = new Map<number, FrameEncoder>();
   const pending = new Map<number, Promise<void>>();
+  let onFrameDone: (() => void) | undefined;
   const server = await startRenderServer({
     projectRoot: root,
     script: code,
@@ -90,12 +92,15 @@ export async function render(opts: RenderOptions): Promise<{ output: string; inf
       if (!enc) return;
       const prev = pending.get(client) ?? Promise.resolve();
       pending.set(client, prev.then(() => enc.write(data)));
+      onFrameDone?.();
     },
   });
-  const browser = await launchBrowser();
+  const rb = await launchRenderBrowser(opts.gpu);
+  const browsers: Browser[] = [rb.browser];
   try {
-    const first = await browser.newPage();
-    const baseInit = { comp: opts.comp, props: opts.props, scale: opts.scale, motionBlurSamples: opts.motionBlurSamples, hide: opts.hide, transparentBackground: opts.transparentBackground, depth: opts.depth };
+    log(rb.gpu ? `WebGL on GPU: ${rb.renderer}` : `WebGL in software (${rb.renderer || 'unknown renderer'}): heavy filter stacks render slowly${opts.gpu === 'on' ? '; no GPU answered' : ''}`);
+    const first = await rb.browser.newPage();
+    const baseInit = { comp: opts.comp, props: opts.props, scale: opts.scale, motionBlurSamples: opts.motionBlurSamples, hide: opts.hide, transparentBackground: opts.transparentBackground };
     const info = await openPage(first, `${server.url}/`, { ...baseInit, client: 0 });
     log(`${info.name}: ${info.outWidth}x${info.outHeight} @ ${info.fps}fps, ${info.frameCount} frames (${info.duration.toFixed(2)}s)`);
 
@@ -117,19 +122,31 @@ export async function render(opts: RenderOptions): Promise<{ output: string; inf
     const alpha = !!opts.transparent;
     const [start, end] = opts.range ?? [0, info.frameCount - 1];
     const total = end - start + 1;
-    const workers = Math.max(1, Math.min(opts.concurrency ?? 1, Math.ceil(total / 15)));
+    const workers = Math.max(1, Math.min(opts.concurrency ?? Math.min(4, availableParallelism()), Math.ceil(total / 15)));
     const chunk = Math.ceil(total / workers);
     const segExt = codec === 'png' ? 'png' : codec === 'gif' || codec === 'webp' || codec === 'apng' ? 'mov' : output.split('.').pop()!;
     const segCodec: Codec = codec === 'gif' || codec === 'webp' || codec === 'apng' ? 'prores' : codec;
-    const pages: Page[] = [first];
-    for (let i = 1; i < workers; i++) {
-      const p = await browser.newPage();
-      await openPage(p, `${server.url}/`, { ...baseInit, client: i });
-      pages.push(p);
-    }
+    // One browser per worker: pages in one browser share its GPU process, which serializes their GL work.
+    const pages: Page[] = [
+      first,
+      ...(await Promise.all(
+        Array.from({ length: workers - 1 }, async (_, k) => {
+          const b = await rb.launchAnother();
+          browsers.push(b);
+          const p = await b.newPage();
+          await openPage(p, `${server.url}/`, { ...baseInit, client: k + 1 });
+          return p;
+        }),
+      )),
+    ];
     const segFiles: string[] = [];
     let done = 0;
     const startTime = Date.now();
+    onFrameDone = () => {
+      done++;
+      const el = (Date.now() - startTime) / 1000;
+      opts.onProgress?.({ done, total, fps: done / el, eta: (total - done) / Math.max(0.01, done / el) });
+    };
     await Promise.all(
       pages.map(async (page, i) => {
         const s = start + i * chunk;
@@ -140,12 +157,7 @@ export async function render(opts: RenderOptions): Promise<{ output: string; inf
         segFiles[i] = seg;
         const enc = new FrameEncoder({ width: info.outWidth, height: info.outHeight, fps: info.fps, codec: segCodec, crf: opts.crf, preset: opts.preset, alpha: alpha || segCodec === 'prores', output: seg, depth: opts.depth });
         encoders.set(i, enc);
-        for (let f = s; f <= e; f++) {
-          await page.evaluate((n) => (window as any).__tx.frame(n), f);
-          done++;
-          const el = (Date.now() - startTime) / 1000;
-          opts.onProgress?.({ done, total, fps: done / el, eta: (total - done) / Math.max(0.01, done / el) });
-        }
+        await page.evaluate(([a, b]) => (window as any).__tx.frames(a, b), [s, e]);
         await waitFrames(pending, encoders, e - s + 1, i);
         await pending.get(i);
         await enc.finish();
@@ -185,7 +197,7 @@ export async function render(opts: RenderOptions): Promise<{ output: string; inf
     return { output, info, seconds: (Date.now() - t0) / 1000 };
   } finally {
     for (const e of encoders.values()) e.abort();
-    await browser.close().catch(() => {});
+    await Promise.all(browsers.map((b) => b.close().catch(() => {})));
     await server.close();
     rmSync(work, { recursive: true, force: true });
   }

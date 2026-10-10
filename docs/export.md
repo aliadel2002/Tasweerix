@@ -5,8 +5,9 @@
 1. esbuild bundles your entry with a small render runtime.
 2. A local server serves the bundle, your assets and the `/__tx` media API. That API covers ffprobe,
    frame-exact FFmpeg decoding with sequential stream reuse, PCM decoding and analysis caching.
-3. Headless Chromium workers (`-j N`) each render a frame range with the same renderer as the studio.
-   They stream raw RGBA over a WebSocket into FFmpeg.
+3. Headless Chromium workers (`-j N`, default one per CPU core up to 4) each render a frame range with
+   the same renderer as the studio, each in its own browser. They stream raw RGBA over a WebSocket into
+   FFmpeg.
 4. The audio mix is rendered in Node by the same TypeScript engine, then segments are joined and muxed.
 
 ```sh
@@ -21,28 +22,18 @@ tasweerix render index.ts -o out/clip.mp4 --range 0-120 --props '{"title":"Hi"}'
 `--scale` sets the output resolution multiplier, `--crf`/`--preset` control quality, and
 `--motion-blur-samples` sets the sub-frame samples for nodes with `motionBlur`.
 
-### Bit depth (`--depth 16`)
+### GPU and speed
 
-By default frames are composited and sent to FFmpeg at 8 bits per channel. `--depth 16` (on
-`render` and `still`) keeps more precision from decode to file, which removes banding from heavy
-grades, shadow lifts and smooth gradients:
+Export uses a hardware GPU for WebGL when one answers (`--gpu auto`, the default). It tries ANGLE on
+Vulkan, then EGL, on Linux, Metal on macOS and D3D11 on Windows, and logs which renderer it got.
+`--gpu off` forces software rendering, `--gpu on` tries the GPU even where no device node is visible,
+and `TASWEERIX_GPU` sets the default.
 
-- 16-bit PNG/TIFF and 10-bit video sources are decoded at full depth.
-- Layers are composited in float16 canvases and GPU filters write half-float output.
-- Frames reach FFmpeg as `rgba64le`. PNG and TIFF are written at 16 bits, ProRes, h265, av1 and
-  vp9 at 10 bits, and AVIF stills at 10 bits.
-- Outputs that only store 8 bits (h264, jpg, webp, gif) get dithered frames instead of truncated
-  ones. JPEG and lossy WebP compression can still flatten very gentle gradients.
-
-```sh
-tasweerix render index.ts -o out/master.mov --codec prores --depth 16
-tasweerix render index.ts -o out/video.mp4 --codec h265 --depth 16   # 10-bit HEVC
-tasweerix still edit.ts -o out/edited.tif --depth 16                  # 16-bit TIFF
-```
-
-Float16 keeps about 11 bits in highlights and more in shadows. Export takes longer: the promo
-example rendered about 1.75x slower than at 8 bits. 16-bit compositing needs Chromium, which the
-CLI bundles.
+Without a GPU, Chromium renders WebGL with SwiftShader on the CPU. That is correct but slow, and every
+full-frame shader pass costs time. The renderer keeps passes down: consecutive per-pixel filters (grade,
+levels, curves, HSL, LUT, vignette and the like) run as one pass, and the last filter of a layer,
+transitions and luma masks draw straight into the output. On CPU-only machines, more workers (`-j`)
+help up to the core count, and a faster x264 preset (`--preset veryfast`) frees CPU for rendering.
 
 ## Interchange
 

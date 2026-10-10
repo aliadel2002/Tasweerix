@@ -12,6 +12,8 @@ declare global {
     __tx: {
       init(opts: InitOptions): Promise<Record<string, unknown>>;
       frame(n: number): Promise<void>;
+      /** Renders and streams frames start..end (inclusive) without a round trip per frame. */
+      frames(start: number, end: number): Promise<void>;
       json(): Record<string, unknown>;
       timings(): Record<string, number>;
     };
@@ -99,6 +101,9 @@ window.__tx = {
     ws.send(msg.buffer);
     // Wait until buffered data is flushed to keep memory bounded.
     while (ws.bufferedAmount > 64 * 1024 * 1024) await new Promise((r) => setTimeout(r, 2));
+  },
+  async frames(start, end) {
+    for (let n = start; n <= end; n++) await window.__tx.frame(n);
   },
   timings() {
     return timings;

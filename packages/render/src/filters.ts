@@ -14,6 +14,20 @@ export interface FilterImpl {
   apply(input: Tex, params: Record<string, any>, fc: FilterContext): Tex;
   /** Optional async preparation (e.g. loading LUT files). */
   prepare?(params: Record<string, any>, assets: AssetProvider): Promise<void>;
+  /**
+   * Per-pixel form of the filter, when it has one. Consecutive per-pixel filters are fused into a
+   * single pass (see `fusePointStages`), so a grade stack costs one full-frame pass, not one each.
+   */
+  point?(params: Record<string, any>, fc: FilterContext): PointStage | undefined;
+}
+
+/** A per-pixel filter step: a shader body whose only read of the input is `texture(uTex, vUv)`. */
+export interface PointStage {
+  /** Fragment shader body without the prelude, defining `main` and writing `outColor`. */
+  body: string;
+  uniforms: Record<string, UniformValue>;
+  /** Frees per-call resources (data textures) once the pass has run. */
+  dispose?: () => void;
 }
 
 const registry = new Map<string, FilterImpl>();
@@ -30,7 +44,7 @@ export function filterKinds(): string[] {
 const frag = (body: string) => `${GLSL_PRELUDE}\n${body}`;
 const color4 = (c: unknown, fallback = '#000') => parseColor((c ?? fallback) as string) as number[];
 
-/** Helper for single-pass filters. */
+/** Helper for single-pass filters. Bodies that only read `texture(uTex, vUv)` also fuse as point stages. */
 function single(body: string, uniforms: (p: Record<string, any>, fc: FilterContext) => Record<string, UniformValue>): FilterImpl {
   const src = frag(body);
   return {
@@ -38,7 +52,97 @@ function single(body: string, uniforms: (p: Record<string, any>, fc: FilterConte
       const out = fc.gl.run(src, { uTex: input, ...uniforms(p, fc) });
       return out;
     },
+    point: isPointwise(body) ? (p, fc) => ({ body, uniforms: uniforms(p, fc) }) : undefined,
   };
+}
+
+/** Runs a point stage on its own (the `apply` of filters defined by `point`). */
+function pointApply(input: Tex, stage: PointStage, gl: GLPipeline): Tex {
+  const out = gl.run(frag(stage.body), { uTex: input, ...stage.uniforms });
+  stage.dispose?.();
+  return out;
+}
+
+// ------------------------------------------------------------------ Pass fusion
+
+const POINT_READ = /texture\(\s*uTex\s*,\s*vUv\s*\)/g;
+
+/** True when a shader body reads its input only at the current pixel, so it can share a pass. */
+export function isPointwise(body: string): boolean {
+  const reads = body.match(POINT_READ)?.length ?? 0;
+  const refs = body.match(/\buTex\b/g)?.length ?? 0;
+  return reads > 0 && reads === refs && !/\breturn\b|gl_FragCoord|\bdiscard\b/.test(body);
+}
+
+interface StageNames {
+  uniforms: Set<string>;
+  src: string;
+}
+
+/** Rewrites a point-stage body as `vec4 _sN(vec4 _in)`, suffixing its uniforms and helpers with `_sN`. */
+function stageFunction(body: string, i: number): StageNames {
+  const uniforms = new Set<string>();
+  for (const m of body.matchAll(/\buniform\s+\w+\s+([^;]+);/g)) {
+    for (const name of m[1]!.split(',')) uniforms.add(name.trim().replace(/\[.*$/, ''));
+  }
+  const helpers = new Set<string>();
+  for (const m of body.matchAll(/\b(?:float|int|bool|[iu]?vec[234]|mat[234]|void)\s+(\w+)\s*\([^)]*\)\s*\{/g)) if (m[1] !== 'main') helpers.add(m[1]!);
+  let src = body;
+  for (const name of [...uniforms, ...helpers]) src = src.replace(new RegExp(`\\b${name}\\b`, 'g'), `${name}_s${i}`);
+  src = src.replace(POINT_READ, '_in').replace(/\boutColor\b/g, '_out');
+  const head = src.match(/\bvoid\s+main\s*\(\s*(?:void)?\s*\)\s*\{/);
+  if (!head) throw new Error('Point stage has no main()');
+  const open = head.index! + head[0].length;
+  let depth = 1;
+  let close = open;
+  for (; close < src.length && depth > 0; close++) {
+    if (src[close] === '{') depth++;
+    else if (src[close] === '}') depth--;
+  }
+  src = `${src.slice(0, head.index!)}vec4 _s${i}(vec4 _in) {\n  vec4 _out = _in;${src.slice(open, close - 1)}\n  return _out;\n}${src.slice(close)}`;
+  return { uniforms, src };
+}
+
+/**
+ * Whether `next` may join a fused pass. On software GL (SwiftShader) a 3D LUT lookup in the same
+ * shader as a long stage such as `grade` runs slower than two passes, so those stay apart there.
+ */
+export function canSharePass(group: PointStage[], next: PointStage, software: boolean): boolean {
+  if (!software) return true;
+  const lut = (s: PointStage) => /\bsampler3D\b/.test(s.body);
+  const long = (s: PointStage) => s.body.length > 1200;
+  return !((lut(next) && group.some(long)) || (long(next) && group.some(lut)));
+}
+
+const fusedCache = new Map<string, { frag: string; names: Set<string>[] }>();
+
+/**
+ * Combines consecutive point stages into one pass. Each stage keeps its own uniforms (suffixed per
+ * stage) and is blended by its `amount` the way separate passes are. Intermediate values stay in
+ * shader precision instead of being written to a texture between filters.
+ */
+export function fusePointStages(input: Tex, stages: (PointStage & { amount: number })[]): { frag: string; uniforms: Record<string, UniformValue>; dispose(): void } {
+  const key = stages.map((s) => s.body).join('\u0000');
+  let fused = fusedCache.get(key);
+  if (!fused) {
+    const fns = stages.map((s, i) => stageFunction(s.body, i));
+    const calls = stages.map((_, i) => `  { vec4 o = _s${i}(c); c = uAmt${i} >= 1.0 ? o : unpremul(mix(premul(c), premul(o), uAmt${i})); }`).join('\n');
+    const amts = stages.map((_, i) => `uniform float uAmt${i};`).join('\n');
+    fused = {
+      frag: frag(`${amts}\n${fns.map((f) => f.src).join('\n')}\nvoid main() {\n  vec4 c = texture(uTex, vUv);\n${calls}\n  outColor = c;\n}`),
+      names: fns.map((f) => f.uniforms),
+    };
+    fusedCache.set(key, fused);
+  }
+  const uniforms: Record<string, UniformValue> = { uTex: input };
+  stages.forEach((s, i) => {
+    uniforms[`uAmt${i}`] = s.amount;
+    for (const [k, v] of Object.entries(s.uniforms)) {
+      const base = k.replace(/\[0\]$/, '');
+      if (fused!.names[i]!.has(base)) uniforms[k === base ? `${base}_s${i}` : `${base}_s${i}[0]`] = v;
+    }
+  });
+  return { frag: fused.frag, uniforms, dispose: () => stages.forEach((s) => s.dispose?.()) };
 }
 
 // ------------------------------------------------------------------ Blur family
@@ -337,7 +441,7 @@ export function curveTable(points: [number, number][] | undefined): Float32Array
   return out;
 }
 
-const CURVES_FRAG = frag(`
+const CURVES_BODY = `
 uniform sampler2D uCurve;
 // Linear interpolation between table entries (the texture is NEAREST-filtered).
 float cv(float x, float row) {
@@ -350,18 +454,18 @@ void main(){
   vec3 v = vec3(cv(c.r, 0.0), cv(c.g, 0.0), cv(c.b, 0.0));
   v = vec3(cv(v.r, 1.0), cv(v.g, 2.0), cv(v.b, 3.0));
   outColor = vec4(v, c.a);
-}`);
-registerFilter('curves', {
-  apply(input, p, fc) {
+}`;
+const curves: FilterImpl = {
+  point(p, fc) {
     const rows = [p.rgb, p.r, p.g, p.b].map((pts) => curveTable(pts));
     const data = new Float32Array(256 * 4 * 4);
     rows.forEach((row, r) => row.forEach((v, i) => data.set([v, v, v, 1], (r * 256 + i) * 4)));
     const tex = fc.gl.dataTexture(256, 4, data);
-    const out = fc.gl.run(CURVES_FRAG, { uTex: input, uCurve: tex });
-    fc.gl.deleteTex(tex);
-    return out;
+    return { body: CURVES_BODY, uniforms: { uCurve: tex }, dispose: () => fc.gl.deleteTex(tex) };
   },
-});
+  apply: (input, p, fc) => pointApply(input, curves.point!(p, fc)!, fc.gl),
+};
+registerFilter('curves', curves);
 
 /** Hue/Saturation/Lightness adjustments, globally or per hue range. */
 registerFilter(
@@ -417,28 +521,31 @@ export function parseCubeLUT(text: string): { size: number; data: Float32Array; 
   return { size, data, domainMin, domainMax };
 }
 
-const LUT_FRAG = frag(`
+const LUT_BODY = `
 uniform sampler3D uLut; uniform float uSizeL, uIntensity;
 void main(){
   vec4 c = texture(uTex, vUv);
   vec3 coord = clamp(c.rgb, 0.0, 1.0) * ((uSizeL - 1.0) / uSizeL) + 0.5 / uSizeL;
   vec3 g = texture(uLut, coord).rgb;
   outColor = vec4(mix(c.rgb, g, uIntensity), c.a);
-}`);
+}`;
 const lutCache = new Map<string, ReturnType<typeof parseCubeLUT>>();
-registerFilter('lut', {
+const lut: FilterImpl = {
   async prepare(p, assets) {
     if (typeof p.src === 'string' && !lutCache.has(p.src)) lutCache.set(p.src, parseCubeLUT(await assets.loadText(p.src)));
   },
-  apply(input, p, fc) {
-    const lut = typeof p.src === 'string' ? lutCache.get(p.src) : (p.lut as ReturnType<typeof parseCubeLUT>);
-    if (!lut) return fc.gl.run(COPY, { uTex: input });
-    const tex = fc.gl.texture3D(lut.size, lut.data);
-    const out = fc.gl.run(LUT_FRAG, { uTex: input, uLut: tex, uSizeL: lut.size, uIntensity: p.intensity ?? 1 });
-    fc.gl.deleteTex(tex);
-    return out;
+  point(p, fc) {
+    const cube = typeof p.src === 'string' ? lutCache.get(p.src) : (p.lut as ReturnType<typeof parseCubeLUT>);
+    if (!cube) return undefined;
+    const tex = fc.gl.texture3D(cube.size, cube.data);
+    return { body: LUT_BODY, uniforms: { uLut: tex, uSizeL: cube.size, uIntensity: p.intensity ?? 1 }, dispose: () => fc.gl.deleteTex(tex) };
   },
-});
+  apply(input, p, fc) {
+    const stage = lut.point!(p, fc);
+    return stage ? pointApply(input, stage, fc.gl) : fc.gl.run(COPY, { uTex: input });
+  },
+};
+registerFilter('lut', lut);
 
 registerFilter('invert', single(`void main(){ vec4 c = texture(uTex, vUv); outColor = vec4(1.0 - c.rgb, c.a); }`, () => ({})));
 registerFilter(
@@ -475,16 +582,16 @@ registerFilter(
     uLight: color4(p.light, '#ffd166'),
   })),
 );
-const GRADMAP_FRAG = frag(`uniform sampler2D uMap;
+const GRADMAP_BODY = `uniform sampler2D uMap;
 void main(){
   vec4 c = texture(uTex, vUv);
   float f = clamp(luma(c.rgb), 0.0, 1.0) * 255.0;
   int i = int(floor(f));
   vec3 m = mix(texelFetch(uMap, ivec2(i, 0), 0).rgb, texelFetch(uMap, ivec2(min(i + 1, 255), 0), 0).rgb, f - float(i));
   outColor = vec4(m, c.a);
-}`);
-registerFilter('gradientMap', {
-  apply(input, p, fc) {
+}`;
+const gradientMap: FilterImpl = {
+  point(p, fc) {
     const stops: [number, string][] = (p.stops ?? [[0, '#000'], [1, '#fff']]).map((s: string | [number, string], i: number, arr: unknown[]) =>
       Array.isArray(s) ? s : [i / Math.max(1, arr.length - 1), s],
     );
@@ -501,11 +608,11 @@ registerFilter('gradientMap', {
       data.set([ca[0] + (cb[0] - ca[0]) * t, ca[1] + (cb[1] - ca[1]) * t, ca[2] + (cb[2] - ca[2]) * t, 1], i * 4);
     }
     const tex = fc.gl.dataTexture(256, 1, data);
-    const out = fc.gl.run(GRADMAP_FRAG, { uTex: input, uMap: tex });
-    fc.gl.deleteTex(tex);
-    return out;
+    return { body: GRADMAP_BODY, uniforms: { uMap: tex }, dispose: () => fc.gl.deleteTex(tex) };
   },
-});
+  apply: (input, p, fc) => pointApply(input, gradientMap.point!(p, fc)!, fc.gl),
+};
+registerFilter('gradientMap', gradientMap);
 registerFilter(
   'posterize',
   single(`uniform float uLevels; void main(){ vec4 c = texture(uTex, vUv); outColor = vec4(floor(c.rgb * uLevels + 0.5) / uLevels, c.a); }`, (p) => ({ uLevels: Math.max(2, (p.levels ?? 6) - 1) })),
