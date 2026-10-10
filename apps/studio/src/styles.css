@@ -87,3 +87,11 @@ footer { grid-area: foot; border-top: 1px solid var(--line); background: var(--p
 .k-audio, .tl-bar.k-audio { background: #15803d; }
 .k-particles, .tl-bar.k-particles { background: #ca8a04; }
 .k-rect, .k-ellipse, .k-path, .k-star, .k-polygon, .k-polyline, .tl-bar.k-rect, .tl-bar.k-ellipse, .tl-bar.k-path, .tl-bar.k-star, .tl-bar.k-polygon, .tl-bar.k-polyline { background: #0f766e; }
+
+/* Plugin command bar (AI assistant and other studio commands) */
+.command-bar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 8px 10px; border-bottom: 1px solid var(--line); background: var(--panel2); }
+.command-bar input { flex: 1; min-width: 120px; background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; }
+.command-bar input:focus { outline: none; border-color: var(--accent); }
+.command-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--accent2); }
+.command-status { flex-basis: 100%; font-size: 12px; color: var(--muted); }
+.command-status.failed { color: var(--danger); }

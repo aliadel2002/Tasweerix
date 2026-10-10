@@ -1,6 +1,6 @@
 import { render } from 'preact';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
-import { api, loadRuntime, timecode, type CompInfo, type Inspection, type PreviewApi, type ServerState, type TimelineRow, type AudioRow } from './api';
+import { api, loadRuntime, timecode, type StudioCommand, type CompInfo, type Inspection, type PreviewApi, type ServerState, type TimelineRow, type AudioRow } from './api';
 import { CodeEditor } from './editor';
 import { Inspector } from './inspector';
 import { Timeline } from './timeline';
@@ -46,6 +46,10 @@ function App() {
   const [reveal, setReveal] = useState<{ line: number; nonce: number } | undefined>();
   const [exportState, setExportState] = useState<string>('');
   const [guides, setGuides] = useState(false);
+  const [commands, setCommands] = useState<StudioCommand[]>([]);
+  const [command, setCommand] = useState('');
+  const [commandInput, setCommandInput] = useState('');
+  const [commandState, setCommandState] = useState<{ busy: boolean; text?: string; error?: boolean }>({ busy: false });
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const version = useRef(-1);
   const rendering = useRef(false);
@@ -118,6 +122,25 @@ function App() {
       void reload(v);
     }
   }, [compName]);
+
+  // ---------------------------------------------------------------- plugin commands (AI assistant …)
+  useEffect(() => {
+    api.commands().then((list) => {
+      setCommands(list);
+      if (list[0]) setCommand(list[0].name);
+    }).catch(() => setCommands([]));
+  }, []);
+  const runCommand = async () => {
+    if (!command || commandState.busy) return;
+    setCommandState({ busy: true, text: 'Working…' });
+    try {
+      const r = await api.runCommand(command, commandInput, file);
+      setCommandState({ busy: false, text: r.ok ? r.log.join(' · ') || 'Done' : r.error, error: !r.ok });
+      if (r.ok) setCommandInput('');
+    } catch (e) {
+      setCommandState({ busy: false, text: String(e), error: true });
+    }
+  };
 
   // ---------------------------------------------------------------- code file
   useEffect(() => {
@@ -411,6 +434,35 @@ function App() {
 
       <section class="side">
         <div class="editor-wrap">
+          {commands.length > 0 && (
+            <form
+              class="command-bar"
+              onSubmit={(e) => {
+                e.preventDefault();
+                void runCommand();
+              }}
+            >
+              {commands.length > 1 ? (
+                <select value={command} onChange={(e) => setCommand((e.target as HTMLSelectElement).value)}>
+                  {commands.map((c) => (
+                    <option value={c.name}>{c.label}</option>
+                  ))}
+                </select>
+              ) : (
+                <span class="command-label" title={commands[0]!.description}>{commands[0]!.label}</span>
+              )}
+              <input
+                value={commandInput}
+                disabled={commandState.busy}
+                placeholder={commands.find((c) => c.name === command)?.prompt ?? ''}
+                onInput={(e) => setCommandInput((e.target as HTMLInputElement).value)}
+              />
+              <button class="primary" type="submit" disabled={commandState.busy}>
+                {commandState.busy ? '…' : 'Run'}
+              </button>
+              {commandState.text && <div class={`command-status ${commandState.error ? 'failed' : ''}`}>{commandState.text}</div>}
+            </form>
+          )}
           <div class="panel-title">
             {file} <span class="muted">· saves automatically</span>
           </div>

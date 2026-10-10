@@ -20,6 +20,7 @@
     "@tasweerix/illustrate": "workspace:*",
     "@tasweerix/smart": "workspace:*",
     "@tasweerix/vision": "workspace:*",
-    "@tasweerix/3d": "workspace:*"
+    "@tasweerix/3d": "workspace:*",
+    "@tasweerix/ai": "workspace:*"
   }
 }

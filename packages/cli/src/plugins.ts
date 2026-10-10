@@ -7,8 +7,8 @@ import { importForNode } from './bundle';
 
 /** Plugins that ship with the CLI. Their commands use the same hook as third-party plugins. */
 export async function builtinPlugins(): Promise<Plugin[]> {
-  const [{ interchangePlugin }, { visionPlugin }] = await Promise.all([import('@tasweerix/interchange/node'), import('@tasweerix/vision/node')]);
-  return [interchangePlugin, visionPlugin];
+  const [{ interchangePlugin }, { visionPlugin }, { aiPlugin }] = await Promise.all([import('@tasweerix/interchange/node'), import('@tasweerix/vision/node'), import('@tasweerix/ai/node')]);
+  return [interchangePlugin, visionPlugin, aiPlugin];
 }
 
 const CONFIG_FILES = ['tasweerix.config.ts', 'tasweerix.config.mts', 'tasweerix.config.js', 'tasweerix.config.mjs'];

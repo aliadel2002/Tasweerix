@@ -2,8 +2,24 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Browser, Page } from 'playwright-core';
+import { definePlugin, usePlugin } from '@tasweerix/core';
 import { launchBrowser } from '../src/browser';
 import { startStudio } from '../src/studio';
+
+// An AI provider from a plugin: the studio's Assistant (a plugin command) uses it.
+usePlugin(
+  definePlugin({
+    name: 'studio-test-ai',
+    aiProviders: {
+      echo: {
+        async generate(req: { prompt: string }) {
+          const code = /<file path="index.ts">\n([\s\S]*?)\n<\/file>/.exec(req.prompt)![1]!;
+          return { text: JSON.stringify({ summary: 'Recolored the rectangle.', code: code.replace("fill: '#22d3ee'", "fill: '#ffd400'") }) };
+        },
+      },
+    },
+  }),
+);
 
 const proj = join(__dirname, '.tmp', 'studio-proj');
 const SRC = `import { composition, rect, text, keys, circle } from 'tasweerix';
@@ -107,5 +123,17 @@ describe('studio (two-way editing)', () => {
   it('reloads the editor and preview when the file changes on disk', async () => {
     writeFileSync(join(proj, 'index.ts'), file().replace("text('Studio'", "text('Edited'"));
     await page.waitForFunction(() => document.querySelector('.cm-content')?.textContent?.includes("text('Edited'"), null, { timeout: 15_000 });
+  });
+
+  it('runs a plugin command (the AI assistant) from the command bar, undoably', async () => {
+    await page.waitForSelector('.command-bar');
+    expect(await page.locator('.command-label').innerText()).toMatch(/assistant/i);
+    await page.locator('.command-bar input').fill('make the rectangle yellow');
+    await page.locator('.command-bar button[type=submit]').click();
+    await waitFor(() => file().includes("fill: '#ffd400'"));
+    await page.waitForSelector('.command-status:has-text("Recolored the rectangle.")');
+    await page.waitForTimeout(800);
+    await page.locator('header button[title^="Undo"]').click();
+    await waitFor(() => file().includes("fill: '#22d3ee'"));
   });
 });
