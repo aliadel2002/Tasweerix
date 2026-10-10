@@ -36,7 +36,7 @@ tasweerix studio .                                # live editor with two-way edi
 | --- | --- |
 | **Video editing** | Trims, speed and reverse, time remapping, sequences and overlaps, nested compositions, masks (alpha and luma), blend modes, adjustment layers, motion blur, 14 GPU transitions plus custom GLSL, captions from SRT/VTT, frame-exact decoding. |
 | **Color and effects** | 43 WebGL2 filters: grade, curves, levels, HSL per range, 3D LUTs (.cube), chroma and luma key, blur family, glow, drop shadow, grain, halftone, glitch, distortions, custom shaders. |
-| **Photo editing** | Crop and straighten, Lanczos resize, perspective correction, auto levels and white balance, local adjustments through masks (radial, gradient, color range, luminance, magic wand, brush, polygon), heal and clone, denoise, dehaze, clarity. There is also batch mode. |
+| **Photo editing** | Crop and straighten, Lanczos resize, perspective correction, auto levels and white balance, local adjustments through masks (radial, gradient, color range, luminance, magic wand, brush, polygon), heal and clone, denoise, dehaze, clarity. Ops run on float pixels and keep highlight headroom between steps, 16-bit PNG and TIFF sources are decoded at full depth, and 8-bit output is dithered to avoid banding. There is also batch mode. |
 | **Audio** | A pure-TypeScript engine with identical output in Node and the browser. It covers EQ, compressor, limiter, gate, de-esser, reverb (algorithmic and convolution), delay, chorus, phaser, distortion, time-stretch, pitch shift and noise reduction. It also has sidechain ducking, buses, stems, BS.1770 loudness, synth voices and SFX. |
 | **Motion graphics** | Kinetic typography, enter/exit/loop behaviors, path morphing, trim paths, follow-path, repeaters, deterministic particles, animated charts, lower thirds, title cards, callouts and audio-reactive visuals. |
 | **Illustration** | Path builder, boolean operations, offset, stroke-to-path, Poisson disc, Delaunay and Voronoi, flow fields, L-systems, patterns, SVG import, and SVG export of any frame. |
@@ -66,7 +66,7 @@ Inside this repository, `pnpm tasweerix <command>` runs the CLI from source. No 
 
 | Command | Purpose |
 | --- | --- |
-| `render <entry> -o out.mp4` | Render video, animated images or a PNG sequence. Codecs: `h264`, `h265`, `vp9`, `av1`, `prores`, `gif`, `webp`, `apng`, `png`. Options include `-j` parallel workers, `--range`, `--scale`, `--transparent` and `--props '{…}'`. |
+| `render <entry> -o out.mp4` | Render video, animated images or a PNG sequence. Codecs: `h264`, `h265`, `vp9`, `av1`, `prores`, `gif`, `webp`, `apng`, `png`. Options include `-j` parallel workers (default one per CPU core, up to 4), `--gpu auto\|on\|off`, `--range`, `--scale`, `--transparent` and `--props '{…}'`. |
 | `still <entry> -o out.png` | Render one frame to PNG, JPG, WebP or AVIF (photos, thumbnails, posters). |
 | `audio <entry> -o mix.mp3` | Render the mix to wav, mp3, flac, aac, ogg or opus, with optional `--stems`. |
 | `svg <entry> -o frame.svg` | Export a frame as vector SVG. Text is converted to glyph outlines. |
@@ -76,8 +76,8 @@ Inside this repository, `pnpm tasweerix <command>` runs the CLI from source. No 
 | `analyze <file>` | Loudness, true peak, tempo, beats and silences. |
 | `export-timeline <entry> -f fcpxml\|otio\|xmeml\|edl` | Export the edit for Final Cut Pro, Resolve, Premiere or OTIO tools (add `--graphics`). |
 | `import-timeline <file> -o <dir>` | Turn an FCPXML, OTIO, FCP7 XML or EDL edit into an editable project, relinking media. |
-| `stabilize <file>` | Render a stabilized copy (`--mode smooth\|lock`, `--analyze` to measure only). |
-| `track <file> --at x,y --time t` | Track a point and print its path as keyframes. |
+| `stabilize <file>` | Render a stabilized copy (`--mode smooth\|lock`, `--model perspective`, `--rolling-shutter auto`, `--analyze` to measure only). |
+| `track <file> --at x,y --time t` | Track a point (or a plane with `--corners`) and print its path as keyframes. |
 | `ai "<request>"` | Ask the assistant to edit the project's code (`--dry-run` shows a diff). |
 | `transcribe <file>` | Speech to `.srt`/`.vtt`/`.json`, optionally `--translate <language>`. |
 | `inspect <entry>` | Print the composition tree as JSON. |
@@ -184,13 +184,16 @@ the Messages API, and drive the studio with Playwright. No test needs network ac
   filter passes are fused and workers run in parallel, but heavy filter stacks at high resolutions
   stay slow on CPU-only machines.
 - Studio preview playback of heavy compositions may run below real time. Exports are always exact.
-- Photos are processed at 8 bits per channel for display. There is no RAW decoding and no HDR or
-  wide-gamut pipeline.
+- 16-bit photos and 10-bit video can be decoded at full depth, but compositing and export are still
+  8 bits per channel (half-float GPU intermediates, dithered 8-bit output), and 10-bit video frames
+  are not used by the renderer yet. 16-bit sources with a non-sRGB color profile may shift slightly
+  in color. There is no RAW decoding and no HDR or wide-gamut pipeline.
 - The audio DSP is solid but basic next to dedicated tools, and there is no VST/AU hosting.
 - Two-way editing only rewrites values written as literals. Computed values are flagged in the
   inspector and must be edited in code.
-- 3D renders through WebGL2: one shadow-casting light, no image-based lighting or reflections, no
-  skeletal animation or morph targets from glTF files. Without a GPU, exports use SwiftShader.
+- 3D renders through WebGL2. Up to 4 directional and 4 point lights cast shadows, glTF skins use up
+  to 8 influences per vertex and deform on the CPU, and reflections show the environment map, not
+  other objects in the scene. Without a GPU, large shadow maps and many shadow-casting lights are slow.
 - Stabilization corrects translation, rotation and zoom, perspective (keystone) changes with
   `model: 'perspective'`, and rolling-shutter skew and wobble with `rollingShutter`. Vibration faster
   than about half the frame rate cannot be recovered from frame-to-frame motion. Planar tracking needs
