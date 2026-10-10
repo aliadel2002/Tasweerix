@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Typecheck, tests and examples
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # FFmpeg for media decode/encode; xmllint validates exported FCPXML.
+      - name: Install FFmpeg and xmllint
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg libxml2-utils
+
+      # OpenTimelineIO cross-checks exported/imported timelines (those tests skip without it).
+      - name: Install OpenTimelineIO
+        run: python3 -m pip install --user --break-system-packages OpenTimelineIO-Plugins
+
+      # Chromium for headless rendering, pinned to the playwright-core version the CLI depends on.
+      - name: Cache Chromium
+        id: chromium-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: chromium-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+
+      - name: Install Chromium
+        if: steps.chromium-cache.outputs.cache-hit != 'true'
+        run: pnpm --filter @tasweerix/cli exec playwright-core install chromium
+
+      - name: Install Chromium system dependencies
+        run: pnpm --filter @tasweerix/cli exec playwright-core install-deps chromium
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Test
+        run: pnpm test
+
+      - name: Render examples
+        run: pnpm examples

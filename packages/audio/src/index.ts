@@ -13,11 +13,15 @@ export * from './synth';
 export * from './effects';
 export * from './mixer';
 export * from './reactive';
+export * from './plugin-host';
 
 import { onPlugin } from '@tasweerix/core';
 import { registerAudioEffect } from './effects';
+import { pluginProcessor } from './plugin-host';
 import { registerGenerator, type GeneratorImpl } from './synth';
 import type { ProcessorFactory } from './dsp/processor';
+
+registerAudioEffect('plugin', pluginProcessor);
 
 // Plugins contribute audio effects and generators.
 onPlugin((p) => {

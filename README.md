@@ -186,15 +186,17 @@ the Messages API, and drive the studio with Playwright. No test needs network ac
 - Studio preview playback of heavy compositions may run below real time. Exports are always exact.
 - High bit depth is opt in: `--depth 16` composites at half-float and writes 16-bit PNG/TIFF or
   10-bit ProRes, h265, av1, vp9 (without alpha) and AVIF, with dithered 8-bit for other formats. It is
-  about 1.75x slower than the default 8-bit path.
+    about 1.75x slower than the default 8-bit path.
 - Wide gamut is opt in too: `--gamut p3` composites in Display P3, `--gamut rec2020` converts that
   to BT.2020 on export (colors beyond P3 clip). LUT-based ICC profiles on 16-bit sources are read as
   sRGB. There is no RAW decoding and no HDR pipeline.
-- The audio DSP is solid but basic next to dedicated tools, and there is no VST/AU hosting.
+- The audio DSP is solid but basic next to dedicated tools. LV2 and LADSPA plugins run through ffmpeg; VST3, CLAP
+  and AU plugins need an external host executable, which Tasweerix does not ship yet (see [Audio](docs/audio.md#third-party-plugins)).
 - Two-way editing only rewrites values written as literals. Computed values are flagged in the
   inspector and must be edited in code.
 - 3D renders through WebGL2. Up to 4 directional and 4 point lights cast shadows, glTF skins use up
-  to 8 influences per vertex and deform on the CPU, and reflections show the environment map, not
+  to 8 influences per vertex and deform on the CPU, only base color textures are imported from glTF
+  files (normal, metallic-roughness and occlusion maps are not), and reflections show the environment map, not
   other objects in the scene. Without a GPU, large shadow maps and many shadow-casting lights are slow.
 - Stabilization corrects translation, rotation and zoom, perspective (keystone) changes with
   `model: 'perspective'`, and rolling-shutter skew and wobble with `rollingShutter`. Vibration faster

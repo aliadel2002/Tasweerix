@@ -2,7 +2,9 @@ import type { Command } from 'commander';
 import { mkdirSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, extname, join, relative, resolve } from 'node:path';
 import { decodePcm, FFMPEG, run } from '@tasweerix/media/node';
-import { detectBeats, detectSilence, encodeWav, integratedLoudness, renderMix, truePeakDb } from '@tasweerix/audio';
+import { detectBeats, detectSilence, encodeWav, integratedLoudness, PLUGIN_FORMATS, renderMix, truePeakDb, type PluginFormat } from '@tasweerix/audio';
+// Enables afx.plugin() (VST3, CLAP, AU, LV2, LADSPA) for every command that mixes audio.
+import { hostableFormats, scanPlugins } from '@tasweerix/audio/node';
 import { loadComposition } from './project';
 import { toSVG } from '@tasweerix/illustrate';
 import { loadFont, getFont, layoutWithFont } from '@tasweerix/type';
@@ -212,6 +214,28 @@ export function registerCommands(program: Command): void {
     .action(async (entry: string, o) => {
       const { comp } = await loadComposition(entry, { comp: o.comp, props: parseProps(o.props), root: o.root });
       console.log(JSON.stringify(comp.toJSON(), null, 2));
+    });
+
+  program
+    .command('audio-plugins')
+    .description('List installed VST3, CLAP, AU, LV2 and LADSPA plugins and which formats can be hosted')
+    .option('-f, --format <formats>', `comma-separated formats (${PLUGIN_FORMATS.join(', ')})`)
+    .option('--json', 'machine-readable output')
+    .action((o) => {
+      const formats = o.format ? (String(o.format).split(',') as PluginFormat[]) : undefined;
+      const unknown = formats?.filter((f) => !PLUGIN_FORMATS.includes(f));
+      if (unknown?.length) throw new Error(`Unknown plugin format: ${unknown.join(', ')}`);
+      const plugins = scanPlugins({ formats });
+      const hosts = hostableFormats();
+      if (o.json) {
+        console.log(JSON.stringify({ hosts, plugins }, null, 2));
+        return;
+      }
+      for (const f of formats ?? PLUGIN_FORMATS) {
+        const list = plugins.filter((p) => p.format === f);
+        console.log(`${f.toUpperCase()} (${list.length}) — ${hosts[f] ? `hosted by ${hosts[f]}` : 'no host available'}`);
+        for (const p of list) console.log(`  ${p.name}${p.vendor ? ` (${p.vendor})` : ''}  ${p.uri ?? p.path}`);
+      }
     });
 }
 
