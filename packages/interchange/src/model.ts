@@ -1,5 +1,34 @@
 import type { Composition, MediaInfo, SceneNode } from '@tasweerix/core';
 
+/** A keyframe on the timeline: `t` in timeline seconds, `ease` a Tasweerix easing name (default linear). */
+export interface TKey<T> {
+  t: number;
+  v: T;
+  ease?: string;
+}
+/** A static value or keyframes. */
+export type TKeyed<T> = T | TKey<T>[];
+
+/**
+ * Spatial adjustments of a clip, applied after it is fitted to the frame. Distances are in
+ * sequence pixels, y pointing down.
+ */
+export interface TTransform {
+  /** Offset of the picture's center from the frame center. */
+  position?: TKeyed<[number, number]>;
+  scale?: TKeyed<[number, number]>;
+  /** Degrees, clockwise. */
+  rotation?: TKeyed<number>;
+  /** Pivot of scale and rotation, relative to the picture's center. */
+  anchor?: [number, number];
+  /** 0 – 1. */
+  opacity?: TKeyed<number>;
+  /** How the picture fits the frame before the transform (default: fit inside it). */
+  conform?: 'fill' | 'none';
+  /** Edges trimmed off the picture, as fractions of its width / height. */
+  crop?: { left: number; right: number; top: number; bottom: number };
+}
+
 /** Editor-agnostic timeline model extracted from a composition. */
 export interface TClip {
   name: string;
@@ -22,6 +51,13 @@ export interface TClip {
   withAudio?: boolean;
   /** Text of a title clip (kind 'title'). */
   text?: string;
+  /** Position, scale, rotation, opacity and crop. */
+  transform?: TTransform;
+  /**
+   * Variable speed: timeline time (seconds) → source time (seconds, same reference as `sourceIn`),
+   * linear between keys and extended along the end segments. `speed` holds the average rate.
+   */
+  timeMap?: { t: number; v: number }[];
 }
 
 export interface TTrack {
@@ -165,4 +201,14 @@ export function resolveTransitions(clips: TClip[]): { clip: TClip; start: number
     out.push({ clip: c, start, duration: Math.max(0, end - start), sourceIn, transition: c.transitionIn && i > 0 ? { duration: c.transitionIn.duration, type: c.transitionIn.type, at: c.start } : undefined });
   });
   return out;
+}
+
+/** Source time of a variable-speed clip at timeline time `t` (linear, extended along the end segments). */
+export function timeMapAt(map: { t: number; v: number }[], t: number): number {
+  if (map.length === 1) return map[0]!.v;
+  let i = 0;
+  while (i < map.length - 2 && t > map[i + 1]!.t) i++;
+  const a = map[i]!;
+  const b = map[i + 1]!;
+  return b.t > a.t ? a.v + ((t - a.t) * (b.v - a.v)) / (b.t - a.t) : a.v;
 }

@@ -49,9 +49,12 @@ tasweerix import-timeline cut.edl --fps 25 --copy-media
 
 The edit becomes **plain, editable TypeScript**: `video()`/`image()`/`text()` calls with literal
 `start` and `trim`, `transition.chain()` for dissolves, `c.audio()` for audio and `c.marker()` for
-markers, so the studio can keep editing it two ways. Media outside the project is symlinked into
-`assets/` (or copied with `--copy-media`); anything that could not be imported (effects, transforms,
-multicam) is listed as a comment at the top of the file.
+markers, so the studio can keep editing it two ways. Transforms from Final Cut Pro (`adjust-transform`,
+`adjust-crop`, `adjust-blend`) and Premiere (Basic Motion, Opacity, Crop) become `position`, `scale`,
+`rotation`, `anchor`, `opacity` and `crop` options, with `keys([...])` where they are keyframed.
+Variable speed ramps and reverse playback become `.remap(keys([...]))`. Media outside the project is
+symlinked into `assets/` (or copied with `--copy-media`); anything that could not be imported
+(effects, color corrections, multicam) is listed as a comment at the top of the file.
 
 To keep the edit in its original file and build on it, import at build time instead:
 

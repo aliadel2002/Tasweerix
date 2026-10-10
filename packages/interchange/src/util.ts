@@ -1,5 +1,5 @@
 import type { XmlNode } from '@tasweerix/core';
-import type { TClip, TimelineModel, TTrack } from './model';
+import { timeMapAt, type TClip, type TimelineModel, type TTrack } from './model';
 
 const IMAGE_RE = /\.(png|jpe?g|webp|gif|avif|bmp|tiff?|psd|exr|dpx|svg)$/i;
 const AUDIO_RE = /\.(mp3|wav|aiff?|aac|m4a|ogg|opus|flac|caf)$/i;
@@ -177,3 +177,27 @@ export const kidText = (n: XmlNode | undefined, tag: string): string | undefined
   const k = kid(n, tag);
   return k ? textOf(k) : undefined;
 };
+
+// ------------------------------------------------------------------ retiming
+
+/**
+ * Applies a time map (timeline seconds → source seconds) to a clip. A map with one constant
+ * forward rate stays a plain `speed`; ramps, freezes inside the clip and reverse playback keep
+ * the map, with `speed` set to the average rate.
+ */
+export function applyTimeMap(c: PlacedClip, pts: { t: number; v: number }[], notes: Set<string>): void {
+  const map = pts.filter((p, i) => i === 0 || p.t > pts[i - 1]!.t + 1e-9);
+  if (map.length < 2) return;
+  const slopes = map.slice(1).map((p, i) => (p.v - map[i]!.v) / (p.t - map[i]!.t));
+  const at = (t: number) => timeMapAt(map, t);
+  const end = c.start + c.duration;
+  c.sourceIn = Math.max(0, at(c.start));
+  if (slopes.every((s) => Math.abs(s - slopes[0]!) < 1e-6) && slopes[0]! >= 0) {
+    c.speed = slopes[0]!;
+    c.timeMap = undefined;
+    return;
+  }
+  c.timeMap = map;
+  c.speed = c.duration > 0 ? Math.abs(at(end) - at(c.start)) / c.duration : 1;
+  if (c.withAudio) notes.add(`sound of variable-speed clip ${c.name} (imported silent)`);
+}

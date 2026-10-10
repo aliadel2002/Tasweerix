@@ -1,6 +1,6 @@
 import { parseXml, type XmlNode } from '@tasweerix/core';
-import type { TClip, TimelineModel } from './model';
-import { applyTransition, baseName, emptyModel, find, findAll, finishModel, isAudioPath, isImagePath, kid, kids, kidText, transitionKind, urlToPath, type PlacedClip, type TransitionMark } from './util';
+import type { TClip, TKey, TKeyed, TTransform, TimelineModel } from './model';
+import { applyTimeMap, applyTransition, baseName, emptyModel, find, findAll, finishModel, isAudioPath, isImagePath, kid, kids, kidText, textOf, transitionKind, urlToPath, type PlacedClip, type TransitionMark } from './util';
 
 const rateOf = (n: XmlNode | undefined): number | undefined => {
   const r = n ? kid(n, 'rate') : undefined;
@@ -49,6 +49,8 @@ export function fromXMEML(text: string): TimelineModel {
       let speed = 1;
       let gainDb: number | undefined;
       let titleText: string | undefined;
+      let graph: { when: number; value: number }[] = [];
+      const motion: XmlNode[] = [];
       for (const eff of findAll(item, 'effect')) {
         const id = (kidText(eff, 'effectid') ?? '').toLowerCase();
         const params = kids(eff, 'parameter');
@@ -57,6 +59,9 @@ export function fromXMEML(text: string): TimelineModel {
           const sp = param('speed');
           if (sp) speed = Number(kidText(sp, 'value') ?? 100) / 100;
           if (/true/i.test(kidText(param('reverse'), 'value') ?? '')) speed = -speed;
+          if (/^(1|true)$/i.test((kidText(param('variablespeed'), 'value') ?? '').trim())) graph = kids(param('graphdict'), 'keyframe').map((k) => ({ when: num(k, 'when'), value: num(k, 'value') }));
+        } else if (id === 'basic' || id === 'opacity' || id === 'crop') {
+          if (item.tag === 'clipitem' && !audio) motion.push(eff);
         } else if (id === 'audiolevels') {
           const lv = Number(kidText(param('level'), 'value'));
           if (lv > 0) gainDb = +(20 * Math.log10(lv)).toFixed(2);
@@ -100,7 +105,18 @@ export function fromXMEML(text: string): TimelineModel {
         info: { duration: fileDur || undefined, hasVideo, hasAudio: hasAudio || isAudioPath(path) },
         gainDb,
       });
-      if (speed < 0) notes.add(`reverse playback on ${name} (imported forward)`);
+      const clip = placed[placed.length - 1]!;
+      // Reverse and variable speed become a time map (timeline → source seconds). Graph and keyframe
+      // times count source frames from the media start when they reach the in-point, else clip frames.
+      const base = (whens: number[]) => (whens.length && Math.min(...whens) >= inF - 0.5 ? inF : 0);
+      if (graph.length >= 2 && !audio) {
+        const b = base(graph.map((g) => g.when));
+        applyTimeMap(clip, graph.map((g) => ({ t: start + (g.when - b) / r, v: g.value / r })), notes);
+      } else if (speed < 0) {
+        if (audio) notes.add(`reverse playback on ${name} (imported forward)`);
+        else applyTimeMap(clip, [{ t: start, v: outF / r }, { t: end, v: inF / r }], notes);
+      }
+      if (motion.length) clip.transform = motionOf(motion, (when, whens) => start + (when - base(whens)) / r / (Math.abs(speed) || 1), m.width, m.height);
     }
   };
 
@@ -185,4 +201,61 @@ export function toXMEML(m: TimelineModel): string {
   </sequence>
 </xmeml>
 `;
+}
+
+const pt = (v: XmlNode | undefined): [number, number] | undefined => {
+  if (!v || !kid(v, 'horiz')) return undefined;
+  return [Number(kidText(v, 'horiz') ?? 0), Number(kidText(v, 'vert') ?? 0)];
+};
+
+/** A parameter's value or keyframes; `toTime(when, allWhens)` places keyframes on the timeline. */
+function paramValue<T>(p: XmlNode | undefined, read: (v: XmlNode | undefined) => T | undefined, toTime: (when: number, whens: number[]) => number): TKeyed<T> | undefined {
+  if (!p) return undefined;
+  const frames = kids(p, 'keyframe');
+  const whens = frames.map((k) => Number(kidText(k, 'when') ?? 0));
+  const keys: TKey<T>[] = [];
+  frames.forEach((k, i) => {
+    const v = read(kid(k, 'value'));
+    if (v !== undefined) keys.push({ t: toTime(whens[i]!, whens), v });
+  });
+  if (keys.length > 1) return keys;
+  if (keys.length === 1) return keys[0]!.v;
+  return read(kid(p, 'value'));
+}
+
+function mapKeyed<A, B>(k: TKeyed<A> | undefined, f: (a: A) => B): TKeyed<B> | undefined {
+  if (k === undefined) return undefined;
+  if (Array.isArray(k) && typeof k[0] === 'object' && !Array.isArray(k[0])) return (k as TKey<A>[]).map((q) => ({ ...q, v: f(q.v) }));
+  return f(k as A);
+}
+
+/**
+ * Basic Motion, Opacity and Crop filters. Scale is in percent, rotation in degrees clockwise, center
+ * and anchor offsets in fractions of the frame (0 = center, ±0.5 = the edges), crop in percent.
+ */
+function motionOf(effects: XmlNode[], toTime: (when: number, whens: number[]) => number, width: number, height: number): TTransform | undefined {
+  const x: TTransform = {};
+  const scalar = (v: XmlNode | undefined) => (v && v.children.length === 0 && textOf(v) !== '' && Number.isFinite(Number(textOf(v))) ? Number(textOf(v)) : undefined);
+  for (const eff of effects) {
+    const id = (kidText(eff, 'effectid') ?? '').toLowerCase();
+    const param = (pid: string) => kids(eff, 'parameter').find((p) => (kidText(p, 'parameterid') ?? '').toLowerCase() === pid);
+    if (id === 'basic') {
+      const scale = mapKeyed(paramValue(param('scale'), scalar, toTime), (s): [number, number] => [s / 100, s / 100]);
+      const rotation = paramValue(param('rotation'), scalar, toTime);
+      const center = mapKeyed(paramValue(param('center'), pt, toTime), (c): [number, number] => [c[0] * width, c[1] * height]);
+      const anchor = pt(kid(param('centeroffset'), 'value'));
+      if (scale !== undefined && JSON.stringify(scale) !== '[1,1]') x.scale = scale;
+      if (rotation !== undefined && rotation !== 0) x.rotation = rotation;
+      if (center !== undefined && JSON.stringify(center) !== '[0,0]') x.position = center;
+      if (anchor && (anchor[0] || anchor[1])) x.anchor = [anchor[0] * width, anchor[1] * height];
+    } else if (id === 'opacity') {
+      const o = mapKeyed(paramValue(param('opacity'), scalar, toTime), (v) => v / 100);
+      if (o !== undefined && o !== 1) x.opacity = o;
+    } else if (id === 'crop') {
+      const e = (k: string) => Math.min(0.49, Math.max(0, (scalar(kid(param(k), 'value')) ?? 0) / 100));
+      const c = { left: e('left'), right: e('right'), top: e('top'), bottom: e('bottom') };
+      if (c.left + c.right + c.top + c.bottom > 1e-6) x.crop = c;
+    }
+  }
+  return Object.keys(x).length ? x : undefined;
 }

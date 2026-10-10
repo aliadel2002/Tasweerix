@@ -9,3 +9,6 @@
 - `final-cut.fcpxml` is hand written in the shape Final Cut Pro 10.6 exports: a 01:00:00:00 start,
   a connected title, a transition, a secondary storyline, a connected audio clip with volume, a
   compound clip (`ref-clip`) and a 50 % retime.
+- `transforms.fcpxml` and `transforms.xml` are hand written in the shapes Final Cut Pro and Premiere
+  Pro export for transforms (position, scale, rotation, anchor, keyframes), opacity, crop, variable
+  speed ramps and reverse playback.
