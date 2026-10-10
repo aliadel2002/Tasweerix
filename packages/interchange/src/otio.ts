@@ -11,12 +11,17 @@ function clipJson(c: TClip, sourceIn: number, duration: number, rate: number) {
     name: c.name,
     // OTIO lays clips out by source_range duration; speed is carried by the LinearTimeWarp effect.
     source_range: range(sourceIn, duration, rate),
-    media_references: { DEFAULT_MEDIA: { OTIO_SCHEMA: 'ExternalReference.1', target_url: c.url, available_range: available, metadata: {}, name: c.src.split('/').pop() } },
+    media_references: {
+      DEFAULT_MEDIA:
+        c.kind === 'title'
+          ? { OTIO_SCHEMA: 'GeneratorReference.1', name: c.name, generator_kind: 'Text', parameters: { text: c.text ?? '' }, available_range: null, metadata: {} }
+          : { OTIO_SCHEMA: 'ExternalReference.1', target_url: c.url, available_range: available, metadata: {}, name: c.src.split('/').pop() },
+    },
     active_media_reference_key: 'DEFAULT_MEDIA',
     effects,
     markers: [],
     enabled: true,
-    metadata: { tasweerix: { src: c.src, kind: c.kind, gainDb: c.gainDb } },
+    metadata: { tasweerix: { src: c.src, kind: c.kind, gainDb: c.gainDb, ...(c.kind === 'title' ? { text: c.text ?? '' } : {}) } },
   };
 }
 
@@ -30,7 +35,8 @@ export function toOTIO(m: TimelineModel): string {
   const track = (kind: 'Video' | 'Audio', clips: TClip[], name: string) => {
     const children: unknown[] = [];
     let cursor = 0;
-    const parts = kind === 'Video' ? resolveTransitions(clips) : clips.map((c) => ({ clip: c, start: c.start, duration: c.duration, sourceIn: c.sourceIn, transition: undefined }));
+    // Overlapping transition pairs become cuts with Transition items (video, and the sync sound of video clips).
+    const parts = resolveTransitions(clips);
     for (const p of parts) {
       if (p.start - cursor > 1e-6) children.push(gap(p.start - cursor, rate));
       if (p.transition) {
@@ -42,11 +48,11 @@ export function toOTIO(m: TimelineModel): string {
     }
     return { OTIO_SCHEMA: 'Track.1', name, kind, children, source_range: null, effects: [], markers: [], enabled: true, metadata: {} };
   };
-  // Video audio as separate audio tracks (OTIO clips reference a single media stream).
-  const embedded: TClip[] = m.video.flatMap((t) => t.clips.filter((c) => c.withAudio)).map((c) => ({ ...c, kind: 'audio' as const, transitionIn: undefined }));
+  // Video audio as separate audio tracks, one per video track (OTIO clips reference a single media stream).
+  const embedded = m.video.map((t) => t.clips.filter((c) => c.withAudio && c.kind === 'video').map((c) => ({ ...c, kind: 'audio' as const }))).filter((t) => t.length);
   const tracks = [
     ...m.video.map((t, i) => track('Video', t.clips, `V${i + 1}`)),
-    ...(embedded.length ? [track('Audio', embedded, 'A-sync')] : []),
+    ...embedded.map((clips, i) => track('Audio', clips, `A-sync${embedded.length > 1 ? i + 1 : ''}`)),
     ...m.audio.map((t, i) => track('Audio', t.clips, `A${i + 1}`)),
   ];
   const timeline = {

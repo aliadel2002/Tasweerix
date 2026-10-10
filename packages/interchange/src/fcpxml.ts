@@ -32,13 +32,19 @@ export function toFCPXML(m: TimelineModel, opts: { eventName?: string; projectNa
     }
     return a.id;
   };
+  let titles = 0;
   const clipXml = (c: (typeof m.video)[number]['clips'][number], offset: number, duration: number, sourceIn: number, lane?: number) => {
-    const ref = assetFor(c);
     const laneAttr = lane !== undefined ? ` lane="${lane}"` : '';
+    if (c.kind === 'title') {
+      const ts = `ts${++titles}`;
+      return `<title ref="rTitle"${laneAttr} offset="${t(offset)}" name="${esc(c.name)}" start="0s" duration="${t(duration)}"><text><text-style ref="${ts}">${esc(c.text ?? c.name)}</text-style></text><text-style-def id="${ts}"><text-style font="Helvetica" fontSize="${Math.round(m.height / 13.5)}" fontColor="1 1 1 1" alignment="center"/></text-style-def></title>`;
+    }
+    const ref = assetFor(c);
     const role = c.kind === 'audio' ? ' audioRole="music"' : '';
     let inner = '';
     if (c.speed !== 1) {
-      inner += `<timeMap><timept time="0s" value="${t(sourceIn)}" interp="smooth2"/><timept time="${t(duration)}" value="${t(sourceIn + duration * c.speed)}" interp="smooth2"/></timeMap>`;
+      // timept times are in the clip's local time (which begins at `start`), values in source time.
+      inner += `<timeMap><timept time="${t(sourceIn)}" value="${t(sourceIn)}" interp="linear"/><timept time="${t(sourceIn + duration)}" value="${t(sourceIn + duration * c.speed)}" interp="linear"/></timeMap>`;
     }
     if (c.gainDb !== undefined && c.gainDb !== 0) inner += `<adjust-volume amount="${c.gainDb.toFixed(1)}dB"/>`;
     const tag = c.kind === 'image' ? 'video' : 'asset-clip';
@@ -75,6 +81,7 @@ export function toFCPXML(m: TimelineModel, opts: { eventName?: string; projectNa
       `<asset id="${id}" name="${esc(c.src.split('/').pop()!)}" start="0s" duration="${c.kind === 'image' ? '0s' : t(dur)}" hasVideo="${hasVideo ? 1 : 0}" hasAudio="${hasAudio ? 1 : 0}"${hasVideo ? ' format="r1" videoSources="1"' : ''}${hasAudio ? ` audioSources="1" audioChannels="${c.info.channels ?? 2}" audioRate="${c.info.sampleRate ?? 48000}"` : ''}><media-rep kind="original-media" src="${esc(c.url)}"/></asset>`,
     );
   }
+  if (titles) resources.push(`<effect id="rTitle" name="Basic Title" uid=".../Titles.localized/Bumper:Opener.localized/Basic Title.localized/Basic Title.moti"/>`);
   const name = esc(opts.projectName ?? m.name ?? 'Tasweerix');
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE fcpxml>

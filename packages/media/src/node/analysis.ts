@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { mkdirSync, readFileSync, statSync, writeFileSync, existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
+import { onPlugin } from '@tasweerix/core';
 import { FFMPEG } from './ffmpeg';
 
 /** Scene-change times (seconds) using ffmpeg's scene score. */
@@ -53,12 +54,40 @@ export class AnalysisCache {
   }
 }
 
+/** Context passed to host analyses. */
+export interface HostAnalysisContext {
+  /** Project root (assets resolve against it). */
+  root: string;
+  /** Resolves another project asset path to an absolute file. */
+  resolve(src: string): string;
+}
+
+/**
+ * A heavy analysis that runs on the host (Node) and is reachable from any environment through
+ * `Env.analyze(kind, src, params)`: ffmpeg scene detection, motion estimation, AI calls …
+ * `file` is the absolute path of `src` (the project root when `src` is empty).
+ */
+export type HostAnalysis = (file: string, params: Record<string, unknown>, ctx: HostAnalysisContext) => Promise<unknown>;
+
+const analyses = new Map<string, HostAnalysis>();
+
+/** Registers a host analysis (plugins can also contribute them through their `analyses` section). */
+export function registerHostAnalysis(kind: string, fn: HostAnalysis): void {
+  analyses.set(kind, fn);
+}
+export function hostAnalysisKinds(): string[] {
+  return [...analyses.keys()];
+}
+
+registerHostAnalysis('scenes', (file, params) => detectScenes(file, Number(params.threshold ?? 0.3)));
+
+onPlugin((p) => {
+  for (const [kind, fn] of Object.entries(p.analyses ?? {})) registerHostAnalysis(kind, fn as HostAnalysis);
+});
+
 /** Host-side analyses exposed through Env.analyze / the /__tx/analyze endpoint. */
-export async function hostAnalyze(kind: string, file: string, params: Record<string, unknown>): Promise<unknown> {
-  switch (kind) {
-    case 'scenes':
-      return detectScenes(file, Number(params.threshold ?? 0.3));
-    default:
-      throw new Error(`Unknown analysis "${kind}"`);
-  }
+export async function hostAnalyze(kind: string, file: string, params: Record<string, unknown>, ctx?: HostAnalysisContext): Promise<unknown> {
+  const fn = analyses.get(kind);
+  if (!fn) throw new Error(`Unknown analysis "${kind}"${kind.includes('.') ? ` (is the package that provides "${kind.split('.')[0]}" loaded?)` : ''}`);
+  return fn(file, params, ctx ?? { root: file, resolve: (s) => s });
 }

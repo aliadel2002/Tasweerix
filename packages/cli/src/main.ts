@@ -81,6 +81,11 @@ await import('./commands').then((m) => m.registerCommands(program)).catch((e) =>
   if (!String(e?.message).includes('Cannot find module')) throw e;
 });
 
+// Commands contributed through the plugin `commands` hook (built-in packages and tasweerix.config.ts).
+const { setupPlugins, registerPluginCommands } = await import('./plugins');
+await setupPlugins();
+registerPluginCommands(program);
+
 program.parseAsync(process.argv).catch((e) => {
   console.error(`✖ ${e?.stack ?? e}`);
   process.exit(1);

@@ -60,6 +60,8 @@ export interface MediaHandlerOptions {
  *   /__tx/probe?src=   → MediaInfo JSON
  *   /__tx/frame?src=&t=&w=&h=&client=  → raw RGBA (x-width / x-height headers)
  *   /__tx/pcm?src=&rate=&channels=     → interleaved float32 little-endian PCM
+ *   /__tx/analyze (GET ?kind=&src=&params= or POST { kind, src, params }) → host analysis JSON
+ *   /__tx/cache?key=&src=              → analysis cache (GET / PUT)
  * Returns true when the request was handled.
  */
 export function createMediaHandler(opts: MediaHandlerOptions) {
@@ -86,9 +88,14 @@ export function createMediaHandler(opts: MediaHandlerOptions) {
         return true;
       }
       if (url.pathname === '/__tx/analyze') {
-        const kind = url.searchParams.get('kind') ?? '';
-        const params = JSON.parse(url.searchParams.get('params') ?? '{}') as Record<string, unknown>;
-        const result = await hostAnalyze(kind, resolveAsset(opts.root, url.searchParams.get('src') ?? ''), params);
+        // GET with query parameters, or POST with a JSON body (large params such as AI prompts or images).
+        let q: { kind?: string; src?: string; params?: Record<string, unknown> };
+        if (req.method === 'POST') {
+          const chunks: Buffer[] = [];
+          for await (const c of req) chunks.push(c as Buffer);
+          q = JSON.parse(Buffer.concat(chunks).toString() || '{}');
+        } else q = { kind: url.searchParams.get('kind') ?? '', src: url.searchParams.get('src') ?? '', params: JSON.parse(url.searchParams.get('params') ?? '{}') };
+        const result = await hostAnalyze(q.kind ?? '', resolveAsset(opts.root, q.src ?? ''), q.params ?? {}, { root: opts.root, resolve: (s) => resolveAsset(opts.root, s) });
         res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(result));
         return true;
       }

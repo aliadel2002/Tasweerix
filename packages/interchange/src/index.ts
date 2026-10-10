@@ -1,3 +1,10 @@
 export * from './model';
 export * from './fcpxml';
 export * from './otio';
+export * from './edl';
+export * from './xmeml';
+export * from './import-fcpxml';
+export * from './import-otio';
+export * from './formats';
+export * from './build';
+export { urlToPath } from './util';

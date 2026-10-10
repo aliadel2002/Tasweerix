@@ -14,6 +14,10 @@ tx still examples/generative-poster/index.ts --root . -o "$OUT/generative-poster
 tx svg examples/generative-poster/index.ts --root . -o "$OUT/generative-poster.svg"
 tx still examples/smart-edit/index.ts -f 60 -o "$OUT/smart-edit.png"
 tx still examples/data-viz/index.ts -f 150 -o "$OUT/data-viz.png"
+tx still examples/3d-title/index.ts --root . -f 90 -o "$OUT/3d-title.png"
+tx still examples/stabilize/index.ts -f 75 -o "$OUT/stabilize.png"
+tx still examples/import-timeline/index.ts --root . -f 100 -o "$OUT/import-timeline.png"
 tx audio examples/podcast/index.ts -o "$OUT/podcast.mp3"
 tx audio examples/beat-viz/beat.ts -o "$OUT/beat.wav"
+# examples/ai needs Claude and speech-to-text credentials, so it is not rendered here.
 echo "All examples rendered to $OUT"

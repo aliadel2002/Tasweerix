@@ -53,6 +53,22 @@ export default composition({ width: 1920, height: 1080, fps: 30, duration: 5, ba
   c.add(text(kashidaText('جميل', keys([[1, 0], [2.5, 4]])), { font: 'assets/font.ttf', size: 110, fill: '#facc15', at: [960, 760] }));
 });
 `,
+  '3d': `import { composition, scene3d, camera3d, light, plane, box, sphere, torus, orbit, keys } from 'tasweerix';
+
+// A 3D scene layer: y is up, units are meters-ish. For 3D text use text3d('Hi', { font: 'assets/font.ttf' }).
+export default composition({ width: 1920, height: 1080, fps: 30, duration: 6, background: '#0b1020' }, (c) => {
+  c.add(
+    scene3d(
+      camera3d({ position: orbit({ radius: 7, height: 2.5, speed: 15 }), target: [0, 0.5, 0] }),
+      light.directional({ position: [4, 6, 3], castShadow: true }),
+      plane({ size: [20, 20], rotation: [-90, 0, 0], color: '#334155' }),
+      box({ position: [-1.8, 0.5, 0], color: '#f43f5e', rotation: keys([[0, [0, 0, 0]], [6, [0, 180, 0]]]) }),
+      sphere({ position: [0, 0.7, 0], radius: 0.7, color: '#22d3ee', roughness: 0.2 }),
+      torus({ position: [1.8, 0.6, 0], color: '#fbbf24', metalness: 1, roughness: 0.3 }),
+    ),
+  );
+});
+`,
 };
 
 export function scaffold(dir: string, template: string): string[] {

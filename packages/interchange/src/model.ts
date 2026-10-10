@@ -6,7 +6,7 @@ export interface TClip {
   /** Source path (as written in the project) and absolute URL for the editor. */
   src: string;
   url: string;
-  kind: 'video' | 'image' | 'audio';
+  kind: 'video' | 'image' | 'audio' | 'title';
   /** Global timeline start / duration (seconds). */
   start: number;
   duration: number;
@@ -20,6 +20,8 @@ export interface TClip {
   transitionIn?: { type: string; duration: number };
   /** Video clip carries its own audio (not exported separately to FCPXML). */
   withAudio?: boolean;
+  /** Text of a title clip (kind 'title'). */
+  text?: string;
 }
 
 export interface TTrack {
@@ -36,8 +38,8 @@ export interface TimelineModel {
   duration: number;
   video: TTrack[];
   audio: TTrack[];
-  markers: { time: number; label: string }[];
-  /** Nodes that could not be represented (graphics, text, effects). */
+  markers: { time: number; label: string; color?: string }[];
+  /** Export: nodes that could not be represented. Import: elements that were skipped or simplified. */
   unsupported: string[];
 }
 

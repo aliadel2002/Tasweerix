@@ -18,6 +18,9 @@ The studio is a local web app with these parts:
 - **Project panel.** It lists files and assets. Click to open a file, use ▶ to make a file the entry,
   ⧉ copies an insert snippet, and you can drop files to upload them into `assets/`.
 - **Export.** Export to MP4, WebM, ProRes, GIF, or the current frame as PNG or JPG, with live progress.
+- **Command bar.** Plugin commands that declare a studio action appear above the code editor. The
+  built-in one is the **Assistant**: describe a change ("make the title gold and slower") and it edits
+  the open file. Its edits join the undo history. See [AI features](ai.md).
 
 ## Two-way editing
 

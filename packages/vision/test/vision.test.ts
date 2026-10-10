@@ -1,0 +1,185 @@
+import { execFileSync } from 'node:child_process';
+import { mkdirSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { usePlugin, video } from '@tasweerix/core';
+import { nodeEnv } from '@tasweerix/media/node';
+import { closeTestBrowser, renderFrames } from '../../cli/src/testing';
+import { analyzeMotion, follow, pointAt, computeStabilization, correctionAt, decompose, fitSimilarity, goodFeatures, gray, invert, compose, apply, ransacSimilarity, stabilize, trackPoint, zoomToCover, type MotionData, type Similarity } from '../src';
+import { visionPlugin } from '../src/node';
+
+const dir = join(__dirname, '.tmp');
+const env = nodeEnv(dir);
+const ff = (...a: string[]) => execFileSync('ffmpeg', ['-y', '-v', 'error', ...a]);
+
+// Known handheld-style shake: the crop window wanders, so the content moves the opposite way.
+const jx = (n: number) => Math.round(160 + 20 * Math.sin(n * 0.7) + 8 * Math.sin(n * 2.3));
+const jy = (n: number) => Math.round(100 + 14 * Math.cos(n * 1.1));
+
+beforeAll(() => {
+  usePlugin(visionPlugin);
+  rmSync(dir, { recursive: true, force: true });
+  mkdirSync(dir, { recursive: true });
+  ff('-f', 'lavfi', '-i', 'testsrc2=s=640x400:d=1', '-frames:v', '1', join(dir, 'still.png'));
+  ff('-loop', '1', '-framerate', '30', '-i', join(dir, 'still.png'), '-vf', `crop=320:200:'160+20*sin(n*0.7)+8*sin(n*2.3)':'100+14*cos(n*1.1)'`, '-t', '2', '-r', '30', '-pix_fmt', 'yuv444p', '-c:v', 'libx264', '-qp', '0', join(dir, 'shaky.mp4'));
+  // Rotation jitter around the center (cropped so no black corners enter the frame).
+  ff('-loop', '1', '-framerate', '30', '-i', join(dir, 'still.png'), '-vf', `rotate=a='0.03*sin(n*0.9)':c=black,crop=320:200`, '-t', '1', '-r', '30', '-pix_fmt', 'yuv444p', '-c:v', 'libx264', '-qp', '0', join(dir, 'rotating.mp4'));
+  // A textured patch moving over a plain background.
+  ff('-f', 'lavfi', '-i', 'color=c=0x404040:s=320x200:d=2:r=30', '-i', join(dir, 'still.png'), '-filter_complex', `[1]crop=40:40:420:260[p];[0][p]overlay=x='40+t*60':y='80+20*sin(t*3)'`, '-t', '2', '-pix_fmt', 'yuv444p', '-c:v', 'libx264', '-qp', '0', join(dir, 'moving.mp4'));
+});
+afterAll(closeTestBrowser);
+
+describe('vision math', () => {
+  it('fits similarities exactly and robustly', () => {
+    const truth: Similarity = [Math.cos(0.1) * 1.05, Math.sin(0.1) * 1.05, 12, -7];
+    const src = Array.from({ length: 40 }, (_, i) => [((i * 37) % 100) - 50, ((i * 53) % 80) - 40] as [number, number]);
+    const dst = src.map((p) => apply(truth, p));
+    expect(fitSimilarity(src, dst)!.map((v) => +v.toFixed(6))).toEqual(truth.map((v) => +v.toFixed(6)));
+    // 30 % outliers.
+    const noisy = dst.map((p, i) => (i % 3 === 0 ? ([p[0] + 40, p[1] - 25] as [number, number]) : p));
+    const r = ransacSimilarity(src, noisy)!;
+    expect(r.inliers).toBe(26);
+    r.model.forEach((v, i) => expect(v).toBeCloseTo(truth[i]!, 5));
+    const back = compose(invert(truth), truth);
+    back.forEach((v, i) => expect(v).toBeCloseTo([1, 0, 0, 0][i]!, 9));
+  });
+
+  it('finds corners on texture and none on flat images', () => {
+    const img = gray(64, 64);
+    for (let y = 0; y < 64; y++) for (let x = 0; x < 64; x++) img.data[y * 64 + x] = (x >> 3) % 2 ^ (y >> 3) % 2 ? 230 : 20;
+    const pts = goodFeatures(img, { max: 100, minDistance: 4 });
+    expect(pts.length).toBeGreaterThan(20);
+    // Checkerboard corners sit on multiples of 8.
+    for (const p of pts) expect(Math.min(p[0] % 8, 8 - (p[0] % 8)) + Math.min(p[1] % 8, 8 - (p[1] % 8))).toBeLessThanOrEqual(2);
+    expect(goodFeatures(gray(64, 64))).toHaveLength(0);
+  });
+
+  it('computes the zoom that hides moved edges', () => {
+    expect(zoomToCover([1, 0, 0.05, 0], 0.5625)).toBeCloseTo(0.5 / 0.45, 6);
+    expect(zoomToCover([1, 0, 0, 0], 0.5625)).toBe(1);
+    // A rotation needs some zoom too.
+    expect(zoomToCover([Math.cos(0.05), Math.sin(0.05), 0, 0], 0.5625)).toBeGreaterThan(1.02);
+  });
+
+  it('locks a shaking camera path and smooths a pan', () => {
+    const n = 60;
+    const W = 320;
+    const shake = (i: number) => 6 * Math.sin(i * 1.3);
+    // Pan of 2 px/frame plus shake, translation only.
+    const motions: Similarity[] = Array.from({ length: n }, (_, i) => (i === 0 ? [1, 0, 0, 0] : [1, 0, 2 + shake(i) - shake(i - 1), 0]));
+    const m: MotionData = { version: 1, width: W, height: 180, fps: 30, start: 0, motions, inliers: motions.map(() => 100) };
+    // Position of frame-0 point (0,0) in each frame, after correction, in pixels.
+    const corrected = (d: ReturnType<typeof computeStabilization>, i: number) => {
+      let x = 0;
+      for (let k = 1; k <= i; k++) x += motions[k]![2];
+      return apply(d.frames[i]!, [x / W, 0])[0] * W;
+    };
+    const lock = computeStabilization(m, { mode: 'lock', crop: 'none' });
+    const lockX = Array.from({ length: n }, (_, i) => corrected(lock, i));
+    expect(Math.max(...lockX) - Math.min(...lockX)).toBeLessThan(0.01);
+    const smooth = computeStabilization(m, { smoothing: 1, crop: 'none' });
+    const sm = Array.from({ length: n }, (_, i) => corrected(smooth, i));
+    // The pan survives, the shake (6 px) is mostly gone in the middle of the clip.
+    const steps = sm.slice(16, 44).map((v, i, a) => (i ? v - a[i - 1]! : 2));
+    for (const s of steps) expect(Math.abs(s - 2)).toBeLessThan(1);
+    const auto = computeStabilization(m, { mode: 'lock' });
+    expect(auto.zoom).toBeGreaterThan(1);
+    expect(auto.zoom).toBeLessThanOrEqual(1.3);
+    expect(correctionAt(auto, 0.5)).toEqual(auto.frames[15]);
+  });
+});
+
+describe('motion analysis (ffmpeg + pure TypeScript)', () => {
+  it('measures frame-to-frame shake to sub-pixel accuracy', async () => {
+    const m = await analyzeMotion('shaky.mp4', {}, env);
+    expect(m.width).toBe(320);
+    expect(m.motions).toHaveLength(60);
+    let worst = 0;
+    for (let n = 1; n < 60; n++) {
+      const d = decompose(m.motions[n]!);
+      worst = Math.max(worst, Math.abs(d.x - -(jx(n) - jx(n - 1))), Math.abs(d.y - -(jy(n) - jy(n - 1))));
+      expect(Math.abs(d.angle)).toBeLessThan(0.003);
+    }
+    expect(worst).toBeLessThan(0.35);
+  });
+
+  it('measures rotation', async () => {
+    const m = await analyzeMotion('rotating.mp4', {}, env);
+    for (let n = 1; n < m.motions.length; n++) {
+      const d = decompose(m.motions[n]!);
+      // ffmpeg's rotate is clockwise for positive angles in image coordinates (y down): same sign as ours.
+      expect(Math.abs(d.angle - 0.03 * (Math.sin(n * 0.9) - Math.sin((n - 1) * 0.9)))).toBeLessThan(0.002);
+    }
+  });
+
+  it('caches analyses and stabilizes a node', async () => {
+    const t0 = Date.now();
+    await analyzeMotion('shaky.mp4', {}, env);
+    expect(Date.now() - t0).toBeLessThan(500);
+    const v = await stabilize(video('shaky.mp4'), { mode: 'lock' }, env);
+    expect(v.meta.stabilization).toMatchObject({ frames: 60 });
+    expect(v.mediaTransform!(1)).toHaveLength(4);
+  });
+
+  it('tracks a moving patch', async () => {
+    const tr = await trackPoint('moving.mp4', { at: [60, 100], time: 0, from: 0, to: 2 }, env);
+    expect(tr.points.length).toBeGreaterThanOrEqual(59);
+    let worst = 0;
+    tr.points.forEach((p, i) => {
+      const t = tr.start + i / tr.fps;
+      worst = Math.max(worst, Math.hypot(p[0] - (60 + 60 * t), p[1] - (100 + 20 * Math.sin(3 * t))));
+    });
+    expect(worst).toBeLessThan(2.5);
+    expect(tr.lost.filter(Boolean)).toHaveLength(0);
+    // follow(): a child of a video trimmed at 0.5 s and shown at 2× sits on the point.
+    const v = video('moving.mp4', { trim: [0.5, 2], size: [640, 400] });
+    await v.prepare(env);
+    const at = follow(v, tr)({ time: 0.5 } as never);
+    const p = pointAt(tr, 1);
+    expect(at[0]).toBeCloseTo(-320 + p[0] * 2, 6);
+    expect(at[1]).toBeCloseTo(-200 + p[1] * 2, 6);
+  });
+});
+
+describe('stabilized rendering (headless Chromium)', () => {
+  it('locked footage holds still on screen', async () => {
+    const src = (lock: boolean) => `import { composition, video, stabilize } from 'tasweerix';
+export default composition({ width: 320, height: 200, fps: 30, duration: 2, background: '#000' }, async (c) => {
+  const v = video('shaky.mp4', { size: [320, 200] });
+  c.add(${lock ? "await stabilize(v, { mode: 'lock', crop: 1.25 })" : 'v'});
+});`;
+    const frames = [3, 11, 20, 37, 52];
+    const diff = (a: { at(x: number, y: number): number[] }, b: { at(x: number, y: number): number[] }) => {
+      let d = 0;
+      let n = 0;
+      for (let y = 60; y < 140; y += 2) {
+        for (let x = 100; x < 220; x += 2) {
+          const p = a.at(x, y);
+          const q = b.at(x, y);
+          d += Math.abs(p[0] - q[0]) + Math.abs(p[1] - q[1]) + Math.abs(p[2] - q[2]);
+          n += 3;
+        }
+      }
+      return d / n;
+    };
+    const raw = await renderFrames({ dir, root: dir, frames, source: src(false) });
+    const st = await renderFrames({ dir, root: dir, frames, source: src(true) });
+    const rawDiff = frames.slice(1).map((_, i) => diff(raw.frames[0]!, raw.frames[i + 1]!));
+    const stDiff = frames.slice(1).map((_, i) => diff(st.frames[0]!, st.frames[i + 1]!));
+    // Shaky frames differ (by 4–85 levels on this pattern); locked ones only by resampling noise.
+    for (const d of rawDiff) expect(d).toBeGreaterThan(2);
+    expect(Math.max(...rawDiff)).toBeGreaterThan(20);
+    for (const d of stDiff) expect(d).toBeLessThan(0.5);
+  });
+});
+
+describe('stabilize command', () => {
+  it('renders a stabilized copy through the CLI', () => {
+    const bin = join(__dirname, '../../cli/bin/tasweerix.mjs');
+    const out = execFileSync(process.execPath, [bin, 'stabilize', 'shaky.mp4', '--mode', 'lock', '-o', 'shaky.locked.mp4'], { cwd: dir, stdio: ['ignore', 'pipe', 'pipe'] });
+    void out;
+    const info = JSON.parse(execFileSync('ffprobe', ['-v', 'error', '-show_entries', 'format=duration:stream=width,height', '-of', 'json', join(dir, 'shaky.locked.mp4')]).toString());
+    expect(info.streams[0]).toMatchObject({ width: 320, height: 200 });
+    expect(Number(info.format.duration)).toBeCloseTo(2, 1);
+  });
+});

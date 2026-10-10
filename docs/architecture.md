@@ -36,5 +36,12 @@ Studio (browser)   Export workers (headless Chromium) ──RGBA──► FFmpeg
   and Node.
 - **Two-way editing.** Creation call stacks are mapped through source maps to call sites, and recast
   rewrites only the touched expressions.
+- **3D.** A `scene3d` node is drawn by its own WebGL2 renderer (`@tasweerix/3d`) into the 2D compositor.
+  3D objects are ordinary scene nodes with Vec3 transforms, so timing, keyframes and the studio work
+  unchanged. Video and 2D-layer textures are rendered by the main renderer each frame.
+- **Host analyses.** Heavy or privileged work — scene detection, motion estimation, AI model calls,
+  speech recognition — runs in Node behind `Env.analyze(kind, src, params)` (`/__tx/analyze` for
+  browser pages). Kinds are registered by packages and plugins; results are cached by input and source
+  file stamp, which keeps parallel export workers consistent.
 - **Packages.** The packages are independent and ESM-only, with no build step inside the monorepo.
   The CLI runs TypeScript through tsx, and bundles use esbuild.

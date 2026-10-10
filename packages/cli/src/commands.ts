@@ -160,20 +160,22 @@ export function registerCommands(program: Command): void {
 
   program
     .command('export-timeline')
-    .description('Export the edit as FCPXML (Final Cut Pro / DaVinci Resolve) or OpenTimelineIO for finishing in a pro editor')
+    .description('Export the edit as FCPXML (Final Cut Pro / DaVinci Resolve), OpenTimelineIO, FCP7 XML (Premiere Pro) or an EDL for finishing in a pro editor')
     .argument('<entry>')
-    .option('-f, --format <fmt>', 'fcpxml | otio', 'fcpxml')
+    .option('-f, --format <fmt>', 'fcpxml | otio | xmeml | edl (or a plugin format)', 'fcpxml')
     .option('-o, --output <file>', 'output file')
     .option('-c, --comp <name>')
     .option('--root <dir>', 'project root for assets')
     .option('--graphics', 'also render non-media layers (shapes, text, effects) as a ProRes 4444 alpha clip on the top track')
     .action(async (entry: string, o) => {
-      const { buildTimelineModel, toFCPXML, toOTIO } = await import('@tasweerix/interchange');
+      const { buildTimelineModel, getTimelineFormat, writeTimeline } = await import('@tasweerix/interchange');
+      const fmt = getTimelineFormat(o.format);
+      if (!fmt?.write) throw new Error(`Unknown timeline format "${o.format}"`);
       const { pathToFileURL } = await import('node:url');
       const { comp, root } = await loadComposition(entry, { comp: o.comp, root: o.root });
       const toUrl = (src: string) => (/^https?:/.test(src) ? src : pathToFileURL(resolve(root, src)).href);
       const model = buildTimelineModel(comp, toUrl);
-      const out = resolve(o.output ?? `out/${(comp.name || 'timeline').replace(/[^\w-]+/g, '-')}.${o.format === 'otio' ? 'otio' : 'fcpxml'}`);
+      const out = resolve(o.output ?? `out/${(comp.name || 'timeline').replace(/[^\w-]+/g, '-')}.${fmt.extensions[0] ?? fmt.name}`);
       mkdirSync(dirname(out), { recursive: true });
       if (o.graphics && model.unsupported.length) {
         const gfx = out.replace(/\.[^.]+$/, '.graphics.mov');
@@ -183,7 +185,7 @@ export function registerCommands(program: Command): void {
         const info = await probeFile(gfx);
         model.video.push({ kind: 'video', clips: [{ name: 'Tasweerix graphics', src: relative(root, gfx), url: pathToFileURL(gfx).href, kind: 'video', start: 0, duration: comp.duration, sourceIn: 0, speed: 1, info, withAudio: false }] });
       }
-      writeFileSync(out, o.format === 'otio' ? toOTIO(model) : toFCPXML(model));
+      writeFileSync(out, writeTimeline(model, fmt.name));
       console.error(`✔ ${out} — ${model.video.reduce((n, t) => n + t.clips.length, 0)} video clips on ${model.video.length} tracks, ${model.audio.reduce((n, t) => n + t.clips.length, 0)} audio clips`);
       if (model.unsupported.length && !o.graphics) console.error(`  not representable (use --graphics to render them): ${model.unsupported.slice(0, 6).join('; ')}${model.unsupported.length > 6 ? ' …' : ''}`);
     });
@@ -192,7 +194,7 @@ export function registerCommands(program: Command): void {
     .command('init')
     .description('Create a new project from a template')
     .argument('[dir]', 'project directory', 'my-tasweerix-project')
-    .option('-t, --template <name>', 'video | photo | audio | motion | arabic', 'video')
+    .option('-t, --template <name>', 'video | photo | audio | motion | arabic | 3d', 'video')
     .action(async (dir: string, o) => {
       const { scaffold } = await import('./templates');
       const files = scaffold(resolve(dir), o.template);
@@ -206,8 +208,9 @@ export function registerCommands(program: Command): void {
     .argument('<entry>')
     .option('-c, --comp <name>')
     .option('--props <json>')
+    .option('--root <dir>', 'project root for assets')
     .action(async (entry: string, o) => {
-      const { comp } = await loadComposition(entry, { comp: o.comp, props: parseProps(o.props) });
+      const { comp } = await loadComposition(entry, { comp: o.comp, props: parseProps(o.props), root: o.root });
       console.log(JSON.stringify(comp.toJSON(), null, 2));
     });
 }

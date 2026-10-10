@@ -8,6 +8,8 @@ import { createMediaHandler, resolveAsset, serveStatic, MIME } from '@tasweerix/
 import { bundle, CLI_ROOT } from './bundle';
 import { render } from './render';
 import { renderAudioForExport } from './audio';
+import { pluginCommands, type CommandContext } from '@tasweerix/core';
+import { setupPlugins } from './plugins';
 
 export interface StudioOptions {
   root: string;
@@ -76,6 +78,8 @@ export async function startStudio(opts: StudioOptions): Promise<{ url: string; c
   const log = opts.log ?? (() => {});
   const root = resolve(opts.root);
   let entryRel = opts.entry ? relative(root, resolve(root, opts.entry)) : findEntry(root);
+  // Built-in and tasweerix.config.ts plugins: host analyses for previews and studio commands.
+  await setupPlugins(root);
   const app = await buildStudioApp();
   const media = createMediaHandler({ root });
 
@@ -201,6 +205,38 @@ export async function startStudio(opts: StudioOptions): Promise<{ url: string; c
           return json(res, 200, { file, line: loc.line });
         } catch (e) {
           return json(res, e instanceof CodemodError ? 409 : 500, { error: (e as Error).message });
+        }
+      }
+      if (p === '/api/commands') {
+        const list = Object.entries(pluginCommands())
+          .filter(([, d]) => d.studio)
+          .map(([name, d]) => ({ name, label: d.studio!.label, prompt: d.studio!.prompt ?? null, description: d.description }));
+        return json(res, 200, list);
+      }
+      if (p === '/api/command' && req.method === 'POST') {
+        const { name, input, file } = JSON.parse((await readBody(req)).toString()) as { name: string; input?: string; file?: string };
+        const def = pluginCommands()[name];
+        if (!def?.studio) return json(res, 404, { error: `No studio command "${name}"` });
+        const logs: string[] = [];
+        const ctx: CommandContext = {
+          args: [input ?? '', file ?? entryRel],
+          options: {},
+          cwd: root,
+          host: 'studio',
+          entry: entryRel,
+          log: (m) => logs.push(m),
+          readFile: async (path) => readFileSync(resolveAsset(root, path), 'utf8'),
+          writeFile: async (path, content) => writeTracked(path, content),
+          render: async (o) => {
+            const r = await render({ entry: resolve(root, o.entry), output: resolve(root, o.output), root: o.root ? resolve(root, o.root) : root, codec: o.codec as never, scale: o.scale, concurrency: o.concurrency ?? 2, props: o.props, renderAudio: renderAudioForExport, onProgress: o.onProgress });
+            return { output: r.output, seconds: r.seconds };
+          },
+        };
+        try {
+          await def.run(ctx);
+          return json(res, 200, { ok: true, log: logs });
+        } catch (e) {
+          return json(res, 500, { ok: false, log: logs, error: String((e as Error).message ?? e) });
         }
       }
       if ((p === '/api/undo' || p === '/api/redo') && req.method === 'POST') {

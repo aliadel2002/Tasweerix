@@ -324,6 +324,12 @@ export class VideoNode extends SceneNode<VideoProps> {
   trimOut?: number;
   muted = false;
   loop = false;
+  /**
+   * Extra transform of the picture inside its box at a source time (stabilization, reframing):
+   * [a, b, tx, ty] maps frame coordinates — centered, in frame widths — to displayed ones
+   * (x' = a·x − b·y + tx, y' = b·x + a·y + ty). The result is clipped to the box.
+   */
+  mediaTransform?: (sourceTime: number) => [number, number, number, number] | null | undefined;
   override defaults() {
     return { src: '', size: null, fit: 'contain' as Fit, crop: null, smoothing: true, volume: 1 };
   }

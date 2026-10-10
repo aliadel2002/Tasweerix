@@ -1,0 +1,1 @@
+{ "name": "example-import-timeline", "private": true, "type": "module", "dependencies": { "tasweerix": "workspace:*" } }

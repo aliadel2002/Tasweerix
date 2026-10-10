@@ -89,7 +89,18 @@ export const api = {
   setEntry: (entry: string) => fetch('/api/entry', { method: 'POST', body: JSON.stringify({ entry }) }),
   upload: (path: string, file: Blob) => fetch(`/api/upload?path=${encodeURIComponent(path)}`, { method: 'POST', body: file }),
   export: (o: Record<string, unknown>) => fetch('/api/export', { method: 'POST', body: JSON.stringify(o) }).then((r) => r.json()),
+  /** Plugin commands that offer a studio action (e.g. the AI assistant). */
+  commands: (): Promise<StudioCommand[]> => fetch('/api/commands').then((r) => r.json()),
+  runCommand: (name: string, input: string, file: string): Promise<{ ok: boolean; log: string[]; error?: string }> =>
+    fetch('/api/command', { method: 'POST', body: JSON.stringify({ name, input, file }) }).then((r) => r.json()),
 };
+
+export interface StudioCommand {
+  name: string;
+  label: string;
+  prompt: string | null;
+  description: string;
+}
 
 export function timecode(t: number, fps: number): string {
   const f = Math.round(t * fps);
