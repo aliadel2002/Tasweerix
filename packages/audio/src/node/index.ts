@@ -1,5 +1,7 @@
-import { inferPluginFormat, setPluginRunner, type PluginFormat, type PluginRef, type PluginRunRequest } from '../plugin-host';
-import { externalHostBackend, ffmpegBackend, type PluginBackend } from './backends';
+import { inferPluginFormat, setPluginRunner, toPluginRef, type PluginFormat, type PluginRef, type PluginRunRequest } from '../plugin-host';
+import { existsSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { externalHostBackend, ffmpegBackend, type PluginBackend, type PluginDescription } from './backends';
 import { findPlugin, scanPlugins, type PluginInfo } from './scan';
 
 export * from './backends';
@@ -18,10 +20,20 @@ export function usePluginHost(host: string | string[]): void {
   registerPluginBackend(externalHostBackend(host));
 }
 
-/** Backends in priority order: registered ones, `TASWEERIX_PLUGIN_HOST`, then ffmpeg. */
+/** The host built in this checkout with `pnpm build:plugin-host` (native/plugin-host), if any. */
+export function bundledPluginHost(): string | undefined {
+  const exe = process.platform === 'win32' ? 'tasweerix-plugin-host.exe' : 'tasweerix-plugin-host';
+  for (const dir of ['build', 'build/Release']) {
+    const p = fileURLToPath(new URL(`../../../../native/plugin-host/${dir}/${exe}`, import.meta.url));
+    if (existsSync(p)) return p;
+  }
+  return undefined;
+}
+
+/** Backends in priority order: registered ones, `TASWEERIX_PLUGIN_HOST` (else the bundled host), then ffmpeg. */
 export function pluginBackends(): PluginBackend[] {
-  const env = process.env.TASWEERIX_PLUGIN_HOST;
-  return [...backends, ...(env ? [externalHostBackend(env)] : []), ffmpegBackend()];
+  const host = process.env.TASWEERIX_PLUGIN_HOST || bundledPluginHost();
+  return [...backends, ...(host ? [externalHostBackend(host)] : []), ffmpegBackend()];
 }
 
 /** Formats that can be hosted right now, with the backend that runs each. */
@@ -54,10 +66,19 @@ export function runPlugin(req: PluginRunRequest): Float32Array[] {
     const hint =
       plugin.format === 'lv2' || plugin.format === 'ladspa'
         ? `ffmpeg was built without the ${plugin.format} filter`
-        : 'set TASWEERIX_PLUGIN_HOST to a plugin host executable (see docs/audio.md)';
+        : 'build the host with `pnpm build:plugin-host` or set TASWEERIX_PLUGIN_HOST (see docs/audio.md)';
     throw new Error(`afx.plugin: no backend can host ${plugin.format.toUpperCase()} plugins: ${hint}`);
   }
   return backend.process({ ...req, plugin });
+}
+
+/** Asks a host for a plugin's name, ports and parameters (VST3 and CLAP). */
+export function describePlugin(ref: string | PluginRef, host?: string | string[]): PluginDescription {
+  const plugin = resolvePluginRef(typeof ref === 'string' ? toPluginRef(ref) : ref);
+  const pool = host ? [externalHostBackend(host), ...pluginBackends()] : pluginBackends();
+  const backend = pool.find((b) => b.describe && b.formats().includes(plugin.format));
+  if (!backend) throw new Error(`no backend can describe ${plugin.format.toUpperCase()} plugins`);
+  return backend.describe!(plugin);
 }
 
 /** Forgets the cached plugin scan (after installing plugins). */

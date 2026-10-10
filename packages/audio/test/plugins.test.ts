@@ -1,12 +1,14 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import { audio, soundscape } from '@tasweerix/core';
 import { afx, renderMix, toPluginRef } from '../src';
 import {
+  bundledPluginHost,
   defaultPluginPaths,
+  describePlugin,
   externalHostBackend,
   ffmpegBackend,
   ffmpegFilterEscape,
@@ -130,5 +132,55 @@ describe('ffmpeg LV2 and LADSPA backend', () => {
   it.skipIf(!ff.formats().includes('ladspa') || !ladspaAmp)('hosts an installed LADSPA plugin', () => {
     const out = runPlugin({ plugin: { path: ladspaAmp!.path, id: 'amp_mono' }, sampleRate: SR, channels: [sine(4800)], params: { c0: 0.5 } });
     expect(peak(out[0]!)).toBeCloseTo(0.25, 2);
+  });
+});
+
+// Needs `pnpm build:plugin-host`, which also builds the test plugins next to the host.
+describe('native plugin host', () => {
+  const host = bundledPluginHost();
+  const build = host ? dirname(host) : '';
+  const clap = join(build, 'test-gain.clap');
+  const vst3 = join(build.replace(/[\\/]Release$/, ''), 'VST3', 'Release', 'vst3-test-gain.vst3');
+  const impulse = (n: number, at: number) => Float32Array.from({ length: n }, (_, i) => (i === at ? 1 : 0));
+  const run = (path: string, channels: Float32Array[], params: Record<string, unknown> = {}, state?: string) =>
+    runPlugin({ plugin: { path }, sampleRate: SR, channels, params, state, host: host! });
+
+  it.skipIf(!host || !existsSync(clap))('hosts CLAP plugins with latency compensation, params and state', () => {
+    expect(externalHostBackend(host!).formats()).toContain('clap');
+    const d = describePlugin(clap, host!);
+    expect(d).toMatchObject({ name: 'Test Gain', inputs: 2, outputs: 2 });
+    expect(d.params[0]).toMatchObject({ id: '1', name: 'Gain', min: -60, max: 24 });
+    // The plugin delays by 64 samples; the host must line the output back up.
+    const [l, r] = run(clap, [impulse(2000, 100), impulse(2000, 700)], { Gain: -6.0206 });
+    expect(l).toHaveLength(2000);
+    expect(l![100]).toBeCloseTo(0.5, 4);
+    expect(r![700]).toBeCloseTo(0.5, 4);
+    expect(peak(l!.subarray(101))).toBe(0);
+    // By id; a mono input feeds both channels of a stereo plugin.
+    expect(run(clap, [impulse(1000, 10)], { '1': 6.0206 })[0]![10]).toBeCloseTo(2, 4);
+    const state = join(mkdtempSync(join(tmpdir(), 'tsx-state-')), 'gain.bin');
+    writeFileSync(state, Buffer.from(new Float32Array([-20]).buffer));
+    expect(run(clap, [impulse(1000, 10)], {}, state)[0]![10]).toBeCloseTo(0.1, 4);
+    expect(() => run(clap, [impulse(10, 0)], { Volume: 1 })).toThrow(/unknown parameter "Volume".*has: Gain/);
+  });
+
+  it.skipIf(!host || !existsSync(vst3))('hosts VST3 plugins with latency compensation and params', () => {
+    expect(externalHostBackend(host!).formats()).toContain('vst3');
+    const d = describePlugin(vst3, host!);
+    expect(d).toMatchObject({ name: 'Test Gain VST3', vendor: 'Tasweerix', inputs: 2, outputs: 2 });
+    expect(d.params[0]).toMatchObject({ name: 'Gain', min: -60, max: 24, default: 0 });
+    const [l, r] = run(vst3, [impulse(3000, 1500), impulse(3000, 20)], { Gain: -6.0206 });
+    expect(l).toHaveLength(3000);
+    expect(l![1500]).toBeCloseTo(0.5, 3);
+    expect(r![20]).toBeCloseTo(0.5, 3);
+    expect(peak(r!.subarray(21))).toBe(0);
+    expect(run(vst3, [impulse(600, 0)])[0]![0]).toBeCloseTo(1, 4);
+  });
+
+  it.skipIf(!host || !existsSync(clap))('runs CLAP plugins inside a mix', async () => {
+    const def = soundscape({ sampleRate: SR }, (c) => void c.audio(audio('a.wav').effect(afx.plugin(clap, { params: { Gain: -12 }, host: host! }))));
+    const comp = await def.create({ env: { kind: 'none', probe: async () => ({ duration: 1, hasAudio: true }) } });
+    const { master } = await renderMix(comp, { load: async () => [sine(SR), sine(SR)], sampleRate: SR, channels: 2 });
+    expect(peak(master.channels[1]!)).toBeCloseTo(0.5 * Math.pow(10, -12 / 20), 2);
   });
 });
