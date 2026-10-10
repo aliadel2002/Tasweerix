@@ -5,7 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { usePlugin, video } from '@tasweerix/core';
 import { nodeEnv } from '@tasweerix/media/node';
 import { closeTestBrowser, renderFrames } from '../../cli/src/testing';
-import { analyzeMotion, follow, pointAt, computeStabilization, correctionAt, decompose, fitSimilarity, goodFeatures, gray, invert, compose, apply, ransacSimilarity, stabilize, trackPoint, zoomToCover, type MotionData, type Similarity } from '../src';
+import { analyzeMotion, follow, pointAt, computeStabilization, correctionAt, decompose, fitSimilarity, goodFeatures, gray, invert, compose, apply, ransacSimilarity, stabilize, trackPoint, zoomToCover, fitHomography, ransacHomography, happly, hcompose, hinvert, hscale, fromSimilarity, H_IDENTITY, type Homography, type MotionData, type Similarity } from '../src';
 import { visionPlugin } from '../src/node';
 
 const dir = join(__dirname, '.tmp');
@@ -24,6 +24,9 @@ beforeAll(() => {
   ff('-loop', '1', '-framerate', '30', '-i', join(dir, 'still.png'), '-vf', `crop=320:200:'160+20*sin(n*0.7)+8*sin(n*2.3)':'100+14*cos(n*1.1)'`, '-t', '2', '-r', '30', '-pix_fmt', 'yuv444p', '-c:v', 'libx264', '-qp', '0', join(dir, 'shaky.mp4'));
   // Rotation jitter around the center (cropped so no black corners enter the frame).
   ff('-loop', '1', '-framerate', '30', '-i', join(dir, 'still.png'), '-vf', `rotate=a='0.03*sin(n*0.9)':c=black,crop=320:200`, '-t', '1', '-r', '30', '-pix_fmt', 'yuv444p', '-c:v', 'libx264', '-qp', '0', join(dir, 'rotating.mp4'));
+  // Keystone wobble: the top and bottom edges of the view swing in depth (a camera tilting and
+  // turning), which no similarity can undo. The enlarged source keeps borders out of the crop.
+  ff('-loop', '1', '-framerate', '30', '-i', join(dir, 'still.png'), '-vf', `scale=960:600,perspective=x0='36*sin(in*0.8)':y0='24*sin(in*1.1)':x1='W-36*sin(in*0.8)':y1='-24*sin(in*1.1)':x2='-36*sin(in*0.8)':y2='H+24*sin(in*1.1)':x3='W+36*sin(in*0.8)':y3='H-24*sin(in*1.1)':eval=frame,crop=480:300,scale=320:200`, '-t', '2', '-r', '30', '-pix_fmt', 'yuv444p', '-c:v', 'libx264', '-qp', '0', join(dir, 'keystone.mp4'));
   // A textured patch moving over a plain background.
   ff('-f', 'lavfi', '-i', 'color=c=0x404040:s=320x200:d=2:r=30', '-i', join(dir, 'still.png'), '-filter_complex', `[1]crop=40:40:420:260[p];[0][p]overlay=x='40+t*60':y='80+20*sin(t*3)'`, '-t', '2', '-pix_fmt', 'yuv444p', '-c:v', 'libx264', '-qp', '0', join(dir, 'moving.mp4'));
 });
@@ -72,7 +75,7 @@ describe('vision math', () => {
     const corrected = (d: ReturnType<typeof computeStabilization>, i: number) => {
       let x = 0;
       for (let k = 1; k <= i; k++) x += motions[k]![2];
-      return apply(d.frames[i]!, [x / W, 0])[0] * W;
+      return apply(d.frames[i] as Similarity, [x / W, 0])[0] * W;
     };
     const lock = computeStabilization(m, { mode: 'lock', crop: 'none' });
     const lockX = Array.from({ length: n }, (_, i) => corrected(lock, i));
@@ -86,6 +89,60 @@ describe('vision math', () => {
     expect(auto.zoom).toBeGreaterThan(1);
     expect(auto.zoom).toBeLessThanOrEqual(1.3);
     expect(correctionAt(auto, 0.5)).toEqual(auto.frames[15]);
+  });
+});
+
+describe('perspective math', () => {
+  const truth: Homography = [1.02, 0.03, 4, -0.02, 0.98, -3, 0.0004, -0.0003, 1];
+  const src = Array.from({ length: 40 }, (_, i) => [((i * 37) % 200) - 100, ((i * 53) % 120) - 60] as [number, number]);
+
+  it('fits homographies exactly and robustly', () => {
+    const dst = src.map((p) => happly(truth, p));
+    fitHomography(src, dst)!.forEach((v, i) => expect(v).toBeCloseTo(truth[i]!, 8));
+    const noisy = dst.map((p, i) => (i % 4 === 0 ? ([p[0] + 30, p[1] - 20] as [number, number]) : p));
+    const r = ransacHomography(noisy.map((_, i) => src[i]!), noisy)!;
+    expect(r.inliers).toBe(30);
+    r.model.forEach((v, i) => expect(v).toBeCloseTo(truth[i]!, 7));
+    hcompose(hinvert(truth), truth).forEach((v, i) => expect(v).toBeCloseTo(H_IDENTITY[i]!, 9));
+    // Pixel ↔ width units.
+    const n = hscale(truth, 320);
+    const p = happly(truth, [64, -32]);
+    const q = happly(n, [0.2, -0.1]);
+    expect(q[0] * 320).toBeCloseTo(p[0], 8);
+    expect(q[1] * 320).toBeCloseTo(p[1], 8);
+  });
+
+  it('computes the zoom that hides perspective edges', () => {
+    const s: Similarity = [Math.cos(0.04) * 1.01, Math.sin(0.04) * 1.01, 0.02, -0.01];
+    expect(zoomToCover(fromSimilarity(s), 0.5625)).toBeCloseTo(zoomToCover(s, 0.5625), 9);
+    // Keystone: the far edge shrinks, so some zoom is needed even without any shift.
+    expect(zoomToCover([1, 0, 0, 0, 1, 0, 0, 0.3, 1], 0.5625)).toBeGreaterThan(1.05);
+  });
+
+  it('locks a perspective-shaking camera path', () => {
+    const n = 40;
+    const W = 320;
+    // Frame-to-frame homographies (pixels): keystone and shift jitter.
+    const k = (i: number): Homography => [1, 0.01 * Math.sin(i), 3 * Math.sin(i * 1.3), 0, 1, 2 * Math.cos(i * 0.7), 0.00008 * Math.sin(i * 0.9), 0.0001 * Math.cos(i * 1.7), 1];
+    const hs = Array.from({ length: n }, (_, i) => (i === 0 ? H_IDENTITY : hcompose(k(i), hinvert(k(i - 1)))));
+    const m: MotionData = { version: 1, width: W, height: 180, fps: 30, start: 0, motions: hs.map(() => [1, 0, 0, 0] as Similarity), inliers: hs.map(() => 100), homographies: hs };
+    const d = computeStabilization(m, { mode: 'lock', crop: 'none', model: 'perspective' });
+    expect(d.frames[0]).toHaveLength(9);
+    // corrected ∘ path is the same transform for every frame: the view no longer moves.
+    let path = H_IDENTITY;
+    const views = hs.map((h, i) => {
+      if (i) path = hcompose(hscale(h, W), path);
+      return hcompose(d.frames[i] as Homography, path);
+    });
+    for (const v of views) for (const p of [[-0.5, -0.28], [0.5, 0.28], [0.1, -0.2]] as [number, number][]) {
+      const a = happly(v, p);
+      const b = happly(views[0]!, p);
+      expect(Math.hypot(a[0] - b[0], a[1] - b[1]) * W).toBeLessThan(0.01);
+    }
+    expect(() => computeStabilization({ ...m, homographies: undefined }, { model: 'perspective' })).toThrow(/perspective/);
+    const auto = computeStabilization(m, { mode: 'lock', model: 'perspective' });
+    expect(auto.zoom).toBeGreaterThan(1);
+    expect(auto.zoom).toBeLessThanOrEqual(1.3);
   });
 });
 
@@ -173,6 +230,48 @@ export default composition({ width: 320, height: 200, fps: 30, duration: 2, back
   });
 });
 
+describe('perspective stabilization (headless Chromium)', () => {
+  it('measures keystone wobble and removes it on screen', async () => {
+    const sim = await analyzeMotion('keystone.mp4', {}, env);
+    const per = await analyzeMotion('keystone.mp4', { model: 'perspective' }, env);
+    expect(sim.homographies).toBeUndefined();
+    expect(per.homographies).toHaveLength(60);
+    // Most frames carry a measured perspective change (not the similarity fallback).
+    expect(per.homographies!.filter((h) => Math.abs(h[6]) + Math.abs(h[7]) > 1e-6).length).toBeGreaterThan(50);
+    const src = (o: string) => `import { composition, video, stabilize } from 'tasweerix';
+export default composition({ width: 320, height: 200, fps: 30, duration: 2, background: '#000' }, async (c) => {
+  const v = video('keystone.mp4', { size: [320, 200] });
+  c.add(${o ? `await stabilize(v, ${o})` : 'v'});
+});`;
+    const frames = [3, 11, 20, 37, 52];
+    const diff = (a: { at(x: number, y: number): number[] }, b: { at(x: number, y: number): number[] }) => {
+      let d = 0;
+      let n = 0;
+      for (let y = 40; y < 160; y += 2) {
+        for (let x = 60; x < 260; x += 2) {
+          const p = a.at(x, y);
+          const q = b.at(x, y);
+          d += Math.abs(p[0] - q[0]) + Math.abs(p[1] - q[1]) + Math.abs(p[2] - q[2]);
+          n += 3;
+        }
+      }
+      return d / n;
+    };
+    const spread = async (o: string) => {
+      const r = await renderFrames({ dir, root: dir, frames, source: src(o) });
+      return frames.slice(1).map((_, i) => diff(r.frames[0]!, r.frames[i + 1]!));
+    };
+    const raw = await spread('');
+    const simDiff = await spread("{ mode: 'lock', crop: 1.25 }");
+    const perDiff = await spread("{ mode: 'lock', crop: 1.25, model: 'perspective' }");
+    // The raw view wobbles; a similarity lock cannot undo keystone (it even drifts further); the
+    // perspective lock holds the picture still up to resampling noise.
+    expect(Math.max(...raw)).toBeGreaterThan(2.5);
+    expect(Math.max(...simDiff)).toBeGreaterThan(4);
+    for (const d of perDiff) expect(d).toBeLessThan(1);
+  });
+});
+
 describe('stabilize command', () => {
   it('renders a stabilized copy through the CLI', () => {
     const bin = join(__dirname, '../../cli/bin/tasweerix.mjs');
@@ -181,5 +280,8 @@ describe('stabilize command', () => {
     const info = JSON.parse(execFileSync('ffprobe', ['-v', 'error', '-show_entries', 'format=duration:stream=width,height', '-of', 'json', join(dir, 'shaky.locked.mp4')]).toString());
     expect(info.streams[0]).toMatchObject({ width: 320, height: 200 });
     expect(Number(info.format.duration)).toBeCloseTo(2, 1);
+    execFileSync(process.execPath, [bin, 'stabilize', 'keystone.mp4', '--mode', 'lock', '--model', 'perspective', '-o', 'keystone.locked.mp4'], { cwd: dir, stdio: ['ignore', 'pipe', 'pipe'] });
+    const info2 = JSON.parse(execFileSync('ffprobe', ['-v', 'error', '-show_entries', 'stream=width,height', '-of', 'json', join(dir, 'keystone.locked.mp4')]).toString());
+    expect(info2.streams[0]).toMatchObject({ width: 320, height: 200 });
   });
 });

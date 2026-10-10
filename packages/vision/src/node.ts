@@ -65,7 +65,7 @@ export async function streamGrayFrames(file: string, o: GrayStreamOptions, onFra
 export async function motionAnalysis(file: string, params: Record<string, unknown>): Promise<MotionData> {
   let est: MotionEstimator | undefined;
   const meta = await streamGrayFrames(file, { width: Number(params.width ?? ANALYSIS_WIDTH), from: Number(params.from ?? 0), to: params.to as number | null }, (frame, _i, info) => {
-    est ??= new MotionEstimator(info.width, info.height, { translationOnly: !!params.translationOnly });
+    est ??= new MotionEstimator(info.width, info.height, { translationOnly: !!params.translationOnly, model: params.model === 'perspective' ? 'perspective' : 'similarity' });
     est.push(frame);
   });
   if (!est) throw new Error(`No frames decoded from ${file}`);
@@ -112,6 +112,7 @@ export const visionPlugin: Plugin = definePlugin({
         { flags: '--max-zoom <n>', description: 'largest automatic zoom used to hide edges', default: '1.3' },
         { flags: '--crop <mode>', description: 'auto | none | <zoom>', default: 'auto' },
         { flags: '--no-rotation', description: 'do not correct rotation' },
+        { flags: '--model <model>', description: 'similarity | perspective (also removes keystone wobble)', default: 'similarity' },
         { flags: '--analyze', description: 'only measure the shake and print it' },
       ],
       async run(ctx: CommandContext) {
@@ -121,13 +122,14 @@ export const visionPlugin: Plugin = definePlugin({
         const src = basename(file);
         const o = ctx.options;
         const t0 = Date.now();
-        const motion = await analyzeMotion(src, {}, env);
+        const model = o.model === 'perspective' ? 'perspective' : 'similarity';
+        const motion = await analyzeMotion(src, { model }, env);
         const s = shakeStats(motion);
         const k = (await probe(file)).width! / motion.width;
         ctx.log(`shake: ${s.frames} frames, mean ${(s.meanShift * k).toFixed(1)} px/frame, max ${(s.maxShift * k).toFixed(1)} px, max rotation ${s.maxRotation.toFixed(2)}° (${((Date.now() - t0) / 1000).toFixed(1)}s)`);
         if (o.analyze) return motion;
         const info = await probe(file);
-        const opts = { mode: o.mode, smoothing: num(o.smoothing, 1), maxZoom: num(o.maxZoom, 1.3), crop: o.crop === 'auto' || o.crop === 'none' ? o.crop : num(o.crop), rotation: o.rotation !== false };
+        const opts = { mode: o.mode, smoothing: num(o.smoothing, 1), maxZoom: num(o.maxZoom, 1.3), crop: o.crop === 'auto' || o.crop === 'none' ? o.crop : num(o.crop), rotation: o.rotation !== false, model };
         // A small generated project renders the stabilized clip with the regular export pipeline.
         const dir = join(root, '.tasweerix');
         mkdirSync(dir, { recursive: true });

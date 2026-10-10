@@ -307,6 +307,9 @@ export function image(src: string, opts?: AnimProps<ImageProps & BaseProps> & No
   return new ImageNode('image', { ...(p as AnimProps<ImageProps & BaseProps>), src }, o);
 }
 
+/** See `VideoNode.mediaTransform`. */
+export type MediaTransform = [number, number, number, number] | [number, number, number, number, number, number, number, number, number];
+
 export interface VideoProps extends ImageProps {
   volume: number;
 }
@@ -326,10 +329,11 @@ export class VideoNode extends SceneNode<VideoProps> {
   loop = false;
   /**
    * Extra transform of the picture inside its box at a source time (stabilization, reframing):
-   * [a, b, tx, ty] maps frame coordinates — centered, in frame widths — to displayed ones
-   * (x' = a·x − b·y + tx, y' = b·x + a·y + ty). The result is clipped to the box.
+   * maps frame coordinates — centered, in frame widths — to displayed ones. Either a similarity
+   * [a, b, tx, ty] (x' = a·x − b·y + tx, y' = b·x + a·y + ty) or a row-major 3 × 3 homography
+   * (9 numbers) for perspective corrections. The result is clipped to the box.
    */
-  mediaTransform?: (sourceTime: number) => [number, number, number, number] | null | undefined;
+  mediaTransform?: (sourceTime: number) => MediaTransform | null | undefined;
   override defaults() {
     return { src: '', size: null, fit: 'contain' as Fit, crop: null, smoothing: true, volume: 1 };
   }
