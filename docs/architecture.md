@@ -25,7 +25,8 @@ Studio (browser)   Export workers (headless Chromium) ──RGBA──► FFmpeg
   frames render in any order and in parallel processes.
 - **One renderer.** Preview and export share the same code. Layers (pooled offscreen canvases) are used
   only when needed (filters, masks, group opacity or blend, motion blur, adjustment layers). The WebGL2
-  pipeline uses half-float intermediates on GPUs and 8-bit on software rasterizers.
+  pipeline uses half-float intermediates (export forces them on software rasterizers too); `--depth 16`
+  also composites in float16 canvases and sends 16-bit frames to FFmpeg.
 - **Media.** Video frames are decoded by FFmpeg processes that stream sequentially per worker, which
   makes them frame-exact (the tests verify this out of order). The studio uses the same API, so the
   preview matches the export.

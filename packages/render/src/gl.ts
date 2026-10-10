@@ -82,7 +82,11 @@ export class GLPipeline {
    * @param precision 'half' uses RGBA16F intermediates (less banding), 'byte' uses RGBA8 (faster on
    * software renderers). 'auto' picks byte on software GL.
    */
-  constructor(width = 1, height = 1, precision: 'auto' | 'half' | 'byte' = 'auto') {
+  /** True when the GL canvas has a half-float drawing buffer, so `output()` keeps more than 8 bits. */
+  readonly floatOutput: boolean;
+
+  /** @param floatOutput half-float drawing buffer and uploads (16-bit compositing). */
+  constructor(width = 1, height = 1, precision: 'auto' | 'half' | 'byte' = 'auto', floatOutput = false) {
     this.canvas = createSurface(width, height);
     const gl = (this.canvas as OffscreenCanvas).getContext('webgl2', {
       premultipliedAlpha: false,
@@ -99,6 +103,8 @@ export class GLPipeline {
     this.software = /swiftshader|llvmpipe|software/i.test(rendererName);
     const useHalf = floatOk && (precision === 'half' || (precision === 'auto' && !this.software));
     this.texFormat = useHalf ? { internal: gl.RGBA16F, type: gl.HALF_FLOAT } : { internal: gl.RGBA8, type: gl.UNSIGNED_BYTE };
+    this.floatOutput = floatOutput && useHalf && typeof (gl as { drawingBufferStorage?: unknown }).drawingBufferStorage === 'function';
+    if (this.floatOutput) this.resizeOutput(width, height);
     this.quad = gl.createBuffer()!;
     gl.bindBuffer(gl.ARRAY_BUFFER, this.quad);
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([0, 0, 1, 0, 0, 1, 0, 1, 1, 0, 1, 1]), gl.STATIC_DRAW);
@@ -247,7 +253,9 @@ export class GLPipeline {
     gl.useProgram(prog);
     gl.bindVertexArray(this.vao);
     if (toScreen) {
-      if (this.canvas.width !== w || this.canvas.height !== h) {
+      if (this.floatOutput) {
+        if (gl.drawingBufferWidth !== w || gl.drawingBufferHeight !== h) this.resizeOutput(w, h);
+      } else if (this.canvas.width !== w || this.canvas.height !== h) {
         this.canvas.width = w;
         this.canvas.height = h;
       }

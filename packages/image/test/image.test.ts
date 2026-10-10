@@ -187,5 +187,16 @@ describe('photo node (browser)', () => {
     const reds = new Set<number>();
     for (let x = 0; x < w; x++) reds.add(frames[0]!.at(x, 0)[0]);
     expect(reds.size).toBeGreaterThan(100);
+    // depth 16 hands the float result to the compositor without the 8-bit step.
+    const r16 = await renderFrames({
+      dir,
+      frames: [0],
+      depth: 16,
+      source: `import { still, photo, op } from 'tasweerix';
+      export default still({ width: ${w}, height: 2 }, (c) => { c.add(photo('ramp16.png', [op.curves({ r: [[0.5, 0], [${0.5 + 2 / 255}, 1]] })], { size: [${w}, 2] })); });`,
+    });
+    const reds16 = new Set<number>();
+    for (let x = 0; x < w; x++) reds16.add(r16.frames[0]!.at(x, 0)[0]);
+    expect(reds16.size).toBeGreaterThan(200);
   });
 });

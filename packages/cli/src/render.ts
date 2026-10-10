@@ -107,13 +107,13 @@ export async function render(opts: RenderOptions): Promise<{ output: string; inf
     // ---------- Still image
     if (opts.still !== undefined || info.kind === 'still') {
       const frame = opts.still ?? 0;
-      const enc = new FrameEncoder({ width: info.outWidth, height: info.outHeight, fps: 1, codec: 'png', output: join(work, 'still.png') });
+      const enc = new FrameEncoder({ width: info.outWidth, height: info.outHeight, fps: 1, codec: 'png', output: join(work, 'still.png'), depth: opts.depth, keepDepth: /\.(png|tiff?|avif)$/i.test(output) });
       encoders.set(0, enc);
       await first.evaluate((n) => (window as any).__tx.frame(n), frame);
       await waitFrames(pending, encoders, 1);
       await pending.get(0);
       await enc.finish();
-      await convertStill(join(work, 'still.png'), output);
+      await convertStill(join(work, 'still.png'), output, opts.depth);
       return { output, info, seconds: (Date.now() - t0) / 1000 };
     }
 
@@ -155,7 +155,7 @@ export async function render(opts: RenderOptions): Promise<{ output: string; inf
         const seg = codec === 'png' ? join(output, `frame_%05d.png`) : join(work, `seg_${String(i).padStart(3, '0')}.${segExt}`);
         if (codec === 'png') mkdirSync(output, { recursive: true });
         segFiles[i] = seg;
-        const enc = new FrameEncoder({ width: info.outWidth, height: info.outHeight, fps: info.fps, codec: segCodec, crf: opts.crf, preset: opts.preset, alpha: alpha || segCodec === 'prores', output: seg });
+        const enc = new FrameEncoder({ width: info.outWidth, height: info.outHeight, fps: info.fps, codec: segCodec, crf: opts.crf, preset: opts.preset, alpha: alpha || segCodec === 'prores', output: seg, depth: opts.depth });
         encoders.set(i, enc);
         await page.evaluate(([a, b]) => (window as any).__tx.frames(a, b), [s, e]);
         await waitFrames(pending, encoders, e - s + 1, i);
@@ -214,13 +214,14 @@ async function waitFrames(pending: Map<number, Promise<void>>, encoders: Map<num
   }
 }
 
-async function convertStill(png: string, output: string) {
+async function convertStill(png: string, output: string, depth: 8 | 16 = 8) {
   const ext = output.split('.').pop()!.toLowerCase();
   if (ext === 'png') {
     const { copyFileSync } = await import('node:fs');
     copyFileSync(png, output);
     return;
   }
-  const args = ext === 'jpg' || ext === 'jpeg' ? ['-q:v', '2'] : ext === 'webp' ? ['-c:v', 'libwebp', '-q:v', '90'] : ext === 'avif' ? ['-c:v', 'libaom-av1', '-still-picture', '1', '-crf', '20'] : [];
+  // A 16-bit intermediate keeps its depth in TIFF (rgba64le) and AVIF (10-bit); jpg/webp get a dithered 8-bit one.
+  const args = ext === 'jpg' || ext === 'jpeg' ? ['-q:v', '2'] : ext === 'webp' ? ['-c:v', 'libwebp', '-q:v', '90'] : ext === 'avif' ? ['-c:v', 'libaom-av1', '-still-picture', '1', '-crf', '20', ...(depth === 16 ? ['-pix_fmt', 'yuv420p10le'] : [])] : [];
   await run(FFMPEG, ['-y', '-v', 'error', '-i', png, ...args, output]);
 }

@@ -31,12 +31,15 @@ interface InitOptions {
   hide?: string[];
   /** Force a transparent background. */
   transparentBackground?: boolean;
+  /** 16: composite in float16 and send rgba64le frames (8 bytes per pixel). Default 8. */
+  depth?: 8 | 16;
 }
 
 let comp: Composition;
 let renderer: Renderer;
 let ws: WebSocket;
 let timings: Record<string, number> = {};
+let depth: 8 | 16 = 8;
 
 function pickDefinition(name?: string): CompositionDefinition {
   const mod = entry as Record<string, unknown>;
@@ -53,12 +56,13 @@ function pickDefinition(name?: string): CompositionDefinition {
 
 window.__tx = {
   async init(opts) {
-    const assets = new BrowserAssets({ baseUrl: `${location.origin}/project/`, server: location.origin, video: 'server', clientId: opts.client });
+    depth = opts.depth ?? 8;
+    const assets = new BrowserAssets({ baseUrl: `${location.origin}/project/`, server: location.origin, video: 'server', clientId: opts.client, depth });
     setEnv(browserEnv(assets));
     const def = pickDefinition(opts.comp);
     comp = await def.create({ props: opts.props });
     // Half-float GPU intermediates: export runs on software GL, where 'auto' would pick 8-bit and band.
-    renderer = new Renderer({ assets, scale: opts.scale ?? comp.scale, motionBlurSamples: opts.motionBlurSamples, glPrecision: 'half' });
+    renderer = new Renderer({ assets, scale: opts.scale ?? comp.scale, motionBlurSamples: opts.motionBlurSamples, glPrecision: 'half', depth });
     if (opts.hide) renderer.skipKinds = new Set(opts.hide);
     if (opts.transparentBackground) comp.background = null;
     await renderer.prepare(comp);
@@ -80,19 +84,20 @@ window.__tx = {
       duration: comp.duration,
       frameCount: comp.frameCount,
       transparent: comp.background === null,
+      depth,
     };
   },
   async frame(n) {
     const t0 = performance.now();
     await renderer.renderFrame(comp, n);
     const t1 = performance.now();
-    const img = renderer.pixels();
+    const px = depth === 16 ? new Uint8Array(renderer.pixels16().buffer) : renderer.pixels().data;
     const t2 = performance.now();
     timings = { render: t1 - t0, read: t2 - t1 };
-    // Header: frame index (uint32) then pixels.
-    const msg = new Uint8Array(4 + img.data.length);
+    // Header: frame index (uint32) then pixels (rgba, or rgba64le at depth 16).
+    const msg = new Uint8Array(4 + px.length);
     new DataView(msg.buffer).setUint32(0, n, true);
-    msg.set(img.data, 4);
+    msg.set(px, 4);
     ws.send(msg.buffer);
     // Wait until buffered data is flushed to keep memory bounded.
     while (ws.bufferedAmount > 64 * 1024 * 1024) await new Promise((r) => setTimeout(r, 2));

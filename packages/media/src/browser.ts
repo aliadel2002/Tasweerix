@@ -1,5 +1,5 @@
 import { hashSeed, type Env, type MediaInfo } from '@tasweerix/core';
-import type { AssetProvider, Drawable } from '@tasweerix/render';
+import { float16Surface, type AssetProvider, type Drawable } from '@tasweerix/render';
 
 export interface BrowserAssetOptions {
   /** Base URL that relative asset paths are resolved against. */
@@ -14,6 +14,11 @@ export interface BrowserAssetOptions {
   server?: string;
   /** Client id so the server can keep one sequential decoder per render worker. */
   clientId?: string | number;
+  /**
+   * 16: decode high bit-depth images and server video frames at 16 bits into float16 canvases
+   * (for a Renderer with `depth: 16`). Default 8.
+   */
+  depth?: 8 | 16;
 }
 
 function joinUrl(base: string, src: string): string {
@@ -30,6 +35,7 @@ export class BrowserAssets implements AssetProvider {
   readonly server: string;
   videoMode: 'server' | 'element';
   clientId: string;
+  readonly depth: 8 | 16;
   private images = new Map<string, Drawable>();
   private pendingImages = new Map<string, Promise<Drawable>>();
   private fonts = new Map<string, Promise<string>>();
@@ -41,6 +47,7 @@ export class BrowserAssets implements AssetProvider {
     this.server = opts.server ?? new URL(this.baseUrl).origin;
     this.videoMode = opts.video ?? 'server';
     this.clientId = String(opts.clientId ?? 0);
+    this.depth = opts.depth ?? 8;
   }
 
   url(src: string): string {
@@ -53,6 +60,14 @@ export class BrowserAssets implements AssetProvider {
     let p = this.pendingImages.get(src);
     if (!p) {
       p = (async () => {
+        if (this.depth === 16) {
+          const hi = await this.loadImage16(src);
+          if (hi) {
+            const s = float16Surface(hi.width, hi.height, hi.data) as Drawable;
+            this.images.set(src, s);
+            return s;
+          }
+        }
         const res = await fetch(this.url(src));
         if (!res.ok) throw new Error(`Failed to load image ${src}: ${res.status}`);
         const blob = await res.blob();
@@ -106,10 +121,12 @@ export class BrowserAssets implements AssetProvider {
     const q = new URLSearchParams({ src, t: time.toFixed(6), client: this.clientId });
     if (hint?.width) q.set('w', String(hint.width));
     if (hint?.height) q.set('h', String(hint.height));
+    if (this.depth === 16) q.set('depth', '16');
     const res = await fetch(`${this.server}/__tx/frame?${q}`);
     if (!res.ok) throw new Error(`Frame request failed for ${src} @ ${time}: ${res.status} ${await res.text()}`);
     const w = Number(res.headers.get('x-width'));
     const h = Number(res.headers.get('x-height'));
+    if (this.depth === 16) return float16Surface(w, h, new Uint16Array(await res.arrayBuffer())) as Drawable;
     const buf = new Uint8ClampedArray(await res.arrayBuffer());
     return createImageBitmap(new ImageData(buf, w, h));
   }
