@@ -18,6 +18,12 @@ importers:
         specifier: ^2.1.8
         version: 2.1.9(@types/node@22.20.5)
 
+  examples/arabic-kinetic:
+    dependencies:
+      tasweerix:
+        specifier: workspace:*
+        version: link:../../packages/tasweerix
+
   examples/beat-viz:
     dependencies:
       tasweerix:
@@ -99,6 +105,15 @@ importers:
         specifier: workspace:*
         version: link:../render
 
+  packages/motion:
+    dependencies:
+      '@tasweerix/core':
+        specifier: workspace:*
+        version: link:../core
+      '@tasweerix/render':
+        specifier: workspace:*
+        version: link:../render
+
   packages/render:
     dependencies:
       '@tasweerix/core':
@@ -119,6 +134,9 @@ importers:
       '@tasweerix/media':
         specifier: workspace:*
         version: link:../media
+      '@tasweerix/motion':
+        specifier: workspace:*
+        version: link:../motion
       '@tasweerix/render':
         specifier: workspace:*
         version: link:../render

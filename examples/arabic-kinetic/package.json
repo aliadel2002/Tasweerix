@@ -1,0 +1,1 @@
+{ "name": "example-arabic-kinetic", "private": true, "type": "module", "dependencies": { "tasweerix": "workspace:*" } }
