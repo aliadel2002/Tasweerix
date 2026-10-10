@@ -4,8 +4,29 @@
   "type": "module",
   "description": "Tasweerix renderer: Canvas2D compositor with a WebGL2 filter and transition pipeline.",
   "license": "MIT",
-  "main": "./src/index.ts",
-  "types": "./src/index.ts",
-  "exports": { ".": "./src/index.ts" },
-  "dependencies": { "@tasweerix/core": "workspace:*" }
+  "main": "./dist/index.cjs",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "dependencies": {
+    "@tasweerix/core": "workspace:*"
+  },
+  "module": "./dist/index.js",
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsup src/index.ts --format esm,cjs --dts --out-dir dist --clean",
+    "prepublishOnly": "pnpm run build"
+  }
 }
