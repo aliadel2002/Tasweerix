@@ -32,6 +32,8 @@ export interface RenderOptions {
   /** Node kinds to leave out of the render. */
   hide?: string[];
   transparentBackground?: boolean;
+  /** Compositing and frame depth: 16 keeps more than 8 bits from decode to ffmpeg. Default 8. */
+  depth?: 8 | 16;
   onProgress?: (p: { done: number; total: number; fps: number; eta: number }) => void;
   log?: (msg: string) => void;
   /** Hook to render audio for the composition; returns a WAV path or undefined. */
@@ -93,14 +95,14 @@ export async function render(opts: RenderOptions): Promise<{ output: string; inf
   const browser = await launchBrowser();
   try {
     const first = await browser.newPage();
-    const baseInit = { comp: opts.comp, props: opts.props, scale: opts.scale, motionBlurSamples: opts.motionBlurSamples, hide: opts.hide, transparentBackground: opts.transparentBackground };
+    const baseInit = { comp: opts.comp, props: opts.props, scale: opts.scale, motionBlurSamples: opts.motionBlurSamples, hide: opts.hide, transparentBackground: opts.transparentBackground, depth: opts.depth };
     const info = await openPage(first, `${server.url}/`, { ...baseInit, client: 0 });
     log(`${info.name}: ${info.outWidth}x${info.outHeight} @ ${info.fps}fps, ${info.frameCount} frames (${info.duration.toFixed(2)}s)`);
 
     // ---------- Still image
     if (opts.still !== undefined || info.kind === 'still') {
       const frame = opts.still ?? 0;
-      const enc = new FrameEncoder({ width: info.outWidth, height: info.outHeight, fps: 1, codec: 'png', output: join(work, 'still.png') });
+      const enc = new FrameEncoder({ width: info.outWidth, height: info.outHeight, fps: 1, codec: 'png', output: join(work, 'still.png'), depth: opts.depth });
       encoders.set(0, enc);
       await first.evaluate((n) => (window as any).__tx.frame(n), frame);
       await waitFrames(pending, encoders, 1);
@@ -136,7 +138,7 @@ export async function render(opts: RenderOptions): Promise<{ output: string; inf
         const seg = codec === 'png' ? join(output, `frame_%05d.png`) : join(work, `seg_${String(i).padStart(3, '0')}.${segExt}`);
         if (codec === 'png') mkdirSync(output, { recursive: true });
         segFiles[i] = seg;
-        const enc = new FrameEncoder({ width: info.outWidth, height: info.outHeight, fps: info.fps, codec: segCodec, crf: opts.crf, preset: opts.preset, alpha: alpha || segCodec === 'prores', output: seg });
+        const enc = new FrameEncoder({ width: info.outWidth, height: info.outHeight, fps: info.fps, codec: segCodec, crf: opts.crf, preset: opts.preset, alpha: alpha || segCodec === 'prores', output: seg, depth: opts.depth });
         encoders.set(i, enc);
         for (let f = s; f <= e; f++) {
           await page.evaluate((n) => (window as any).__tx.frame(n), f);

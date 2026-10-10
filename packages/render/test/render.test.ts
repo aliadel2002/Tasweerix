@@ -130,3 +130,51 @@ describe('renderer (headless Chromium)', () => {
     expect(lit(100, 200)).toBeGreaterThan(300);
   });
 });
+
+describe('16-bit compositing (depth: 16)', () => {
+  // Red ramps across 2 8-bit levels in the shadows; a GPU curve stretches it to black..white.
+  const lo = 0.05;
+  beforeAll(() => {
+    const w = 256;
+    const raw = Buffer.alloc(w * 2 * 6);
+    for (let i = 0; i < w * 2; i++) {
+      raw.writeUInt16LE(Math.round((lo + ((i % w) / (w - 1)) * (2 / 255)) * 65535), i * 6);
+      raw.writeUInt16LE(32768, i * 6 + 2);
+      raw.writeUInt16LE(32768, i * 6 + 4);
+    }
+    execFileSync('ffmpeg', ['-y', '-v', 'error', '-f', 'rawvideo', '-pix_fmt', 'rgb48le', '-s', `${w}x2`, '-i', '-', '-pix_fmt', 'rgb48be', join(dir, 'ramp16.png')], { input: raw });
+    execFileSync('ffmpeg', ['-y', '-v', 'error', '-f', 'lavfi', '-i', "nullsrc=s=256x2:r=10:d=1,format=gray10le,geq=lum='X+16'", '-c:v', 'ffv1', '-pix_fmt', 'gray10le', join(dir, 'ten.mkv')]);
+  });
+  const scene = src(`export default still({ width: 256, height: 2 }, (c) => {
+    c.add(image('ramp16.png', { at: [128, 1] }).filter(fx.curves({ r: [[${lo}, 0], [${lo + 2 / 255}, 1]] })));
+  });`);
+  const levels = (f: { at(x: number, y: number): number[] }) => {
+    const s = new Set<number>();
+    for (let x = 0; x < 256; x++) s.add(f.at(x, 0)[0]!);
+    return s.size;
+  };
+
+  it('keeps a 16-bit source through decode, GPU filters, compositing and readback', async () => {
+    const r8 = await renderFrames({ dir, frames: [0], source: scene });
+    const r16 = await renderFrames({ dir, frames: [0], source: scene, depth: 16 });
+    expect(r16.frames[0]!.data.length).toBe(256 * 2 * 8);
+    expect(levels(r8.frames[0]!)).toBeLessThan(10);
+    expect(levels(r16.frames[0]!)).toBeGreaterThan(100);
+    // Same colors otherwise: untouched channels match the 8-bit render within one level.
+    for (const c of [1, 2]) expect(Math.abs(r16.frames[0]!.at(128, 0)[c]! / 257 - r8.frames[0]!.at(128, 0)[c]!)).toBeLessThanOrEqual(1);
+    expect(r16.frames[0]!.at(0, 0)[3]).toBe(65535);
+  });
+
+  it('draws 10-bit video frames at full depth', async () => {
+    const { frames } = await renderFrames({
+      dir,
+      frames: [0],
+      depth: 16,
+      source: src(`export default composition({ width: 256, height: 2, fps: 10, duration: 1 }, (c) => { c.add(video('ten.mkv', { at: [128, 1] })); });`),
+    });
+    // 10-bit gray steps of 1/1023: an 8-bit path would only produce multiples of 257.
+    let between = 0;
+    for (let x = 0; x < 256; x++) if (frames[0]!.at(x, 0)[0]! % 257 !== 0) between++;
+    expect(between).toBeGreaterThan(150);
+  });
+});

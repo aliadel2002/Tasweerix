@@ -13,6 +13,8 @@ export interface EncodeOptions {
   alpha?: boolean;
   preset?: string;
   output: string;
+  /** Input frame depth: 8 → rgba, 16 → rgba64le. Default 8. */
+  depth?: 8 | 16;
 }
 
 export function defaultExtension(codec: Codec, alpha = false): string {
@@ -79,7 +81,7 @@ export class FrameEncoder {
   constructor(readonly opts: EncodeOptions) {
     const args = [
       '-y', '-v', 'error',
-      '-f', 'rawvideo', '-pix_fmt', 'rgba', '-s', `${opts.width}x${opts.height}`, '-r', String(opts.fps),
+      '-f', 'rawvideo', '-pix_fmt', opts.depth === 16 ? 'rgba64le' : 'rgba', '-s', `${opts.width}x${opts.height}`, '-r', String(opts.fps),
       '-i', '-',
       ...codecArgs(opts),
       ...(opts.codec === 'png' ? ['-f', 'image2'] : []),

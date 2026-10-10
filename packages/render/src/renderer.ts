@@ -17,7 +17,7 @@ import type { AssetProvider } from './assets';
 import { getFilter, LUMA_TO_ALPHA, MIX_FRAG, type FilterContext } from './filters';
 import { GLPipeline, type Tex } from './gl';
 import { toCanvasPaint } from './paint';
-import { createSurface, ctx2d, SurfacePool, type Ctx2D, type Surface } from './surface';
+import { createSurface, ctx2d, depthSettings, readRGBA16, SurfacePool, type Ctx2D, type Depth, type Surface } from './surface';
 
 /** Everything a drawer needs to draw one node's own content. */
 export interface DrawContext {
@@ -62,6 +62,11 @@ export interface RendererOptions {
   canvas?: Surface;
   /** GPU intermediate precision (see GLPipeline). */
   glPrecision?: 'auto' | 'half' | 'byte';
+  /**
+   * Compositing depth. 16 uses float16 2D canvases and a half-float GPU output, so gradients and
+   * grades keep more than 8 bits until `pixels16()`. Chromium only; default 8.
+   */
+  depth?: Depth;
 }
 
 const BLEND: Record<string, GlobalCompositeOperation> = {
@@ -78,6 +83,7 @@ export class Renderer {
   scale: number;
   motionBlurSamples: number;
   glPrecision: 'auto' | 'half' | 'byte';
+  readonly depth: Depth;
   canvas: Surface;
   ctx: Ctx2D;
   private pool: SurfacePool;
@@ -95,14 +101,15 @@ export class Renderer {
     this.assets = opts.assets;
     this.scale = opts.scale ?? 1;
     this.motionBlurSamples = opts.motionBlurSamples ?? 10;
-    this.glPrecision = opts.glPrecision ?? 'auto';
+    this.depth = opts.depth ?? 8;
+    this.glPrecision = this.depth === 16 ? 'half' : (opts.glPrecision ?? 'auto');
     this.canvas = opts.canvas ?? createSurface(1, 1);
-    this.ctx = ctx2d(this.canvas);
-    this.pool = new SurfacePool(1, 1);
+    this.ctx = ctx2d(this.canvas, depthSettings(this.depth));
+    this.pool = new SurfacePool(1, 1, this.depth);
   }
 
   get gl(): GLPipeline {
-    if (!this._gl) this._gl = new GLPipeline(1, 1, this.glPrecision);
+    if (!this._gl) this._gl = new GLPipeline(1, 1, this.glPrecision, this.depth === 16);
     return this._gl;
   }
 
@@ -146,7 +153,7 @@ export class Renderer {
     if (this.canvas.width !== w || this.canvas.height !== h) {
       this.canvas.width = w;
       this.canvas.height = h;
-      this.ctx = ctx2d(this.canvas);
+      this.ctx = ctx2d(this.canvas, depthSettings(this.depth));
     }
     this.pool.resize(w, h);
     const ctx = comp.contextAt(frame, props);
@@ -170,6 +177,15 @@ export class Renderer {
   /** Reads the last rendered frame. */
   pixels(): ImageData {
     return this.ctx.getImageData(0, 0, this.canvas.width, this.canvas.height);
+  }
+
+  /** Reads the last rendered frame as 16-bit straight RGBA (full precision when `depth` is 16). */
+  pixels16(): Uint16Array {
+    if (this.depth === 16) return readRGBA16(this.ctx, this.canvas.width, this.canvas.height);
+    const d = this.pixels().data;
+    const out = new Uint16Array(d.length);
+    for (let i = 0; i < d.length; i++) out[i] = d[i]! * 257;
+    return out;
   }
 
   private drawBackground(c: Ctx2D, comp: Composition) {

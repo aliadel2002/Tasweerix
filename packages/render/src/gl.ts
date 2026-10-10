@@ -80,7 +80,11 @@ export class GLPipeline {
    * @param precision 'half' uses RGBA16F intermediates (less banding), 'byte' uses RGBA8 (faster on
    * software renderers). 'auto' picks byte on software GL.
    */
-  constructor(width = 1, height = 1, precision: 'auto' | 'half' | 'byte' = 'auto') {
+  /** True when the GL canvas has a half-float drawing buffer, so `output()` keeps more than 8 bits. */
+  readonly floatOutput: boolean;
+
+  /** @param floatOutput half-float drawing buffer and uploads (16-bit compositing). */
+  constructor(width = 1, height = 1, precision: 'auto' | 'half' | 'byte' = 'auto', floatOutput = false) {
     this.canvas = createSurface(width, height);
     const gl = (this.canvas as OffscreenCanvas).getContext('webgl2', {
       premultipliedAlpha: false,
@@ -97,6 +101,8 @@ export class GLPipeline {
     this.software = /swiftshader|llvmpipe|software/i.test(rendererName);
     const useHalf = floatOk && (precision === 'half' || (precision === 'auto' && !this.software));
     this.texFormat = useHalf ? { internal: gl.RGBA16F, type: gl.HALF_FLOAT } : { internal: gl.RGBA8, type: gl.UNSIGNED_BYTE };
+    this.floatOutput = floatOutput && useHalf && typeof (gl as { drawingBufferStorage?: unknown }).drawingBufferStorage === 'function';
+    if (this.floatOutput) this.resizeOutput(width, height);
     this.quad = gl.createBuffer()!;
     gl.bindBuffer(gl.ARRAY_BUFFER, this.quad);
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([0, 0, 1, 0, 0, 1, 0, 1, 1, 0, 1, 1]), gl.STATIC_DRAW);
@@ -179,6 +185,12 @@ export class GLPipeline {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
   }
 
+  /** Sizes the half-float drawing buffer (`drawingBufferStorage` also sets the canvas size). */
+  private resizeOutput(w: number, h: number) {
+    const gl = this.gl as WebGL2RenderingContext & { drawingBufferStorage(fmt: number, w: number, h: number): void };
+    gl.drawingBufferStorage(gl.RGBA16F, w, h);
+  }
+
   /** Uploads a canvas / image / bitmap into a new render target. */
   upload(src: TexImageSource, width?: number, height?: number): Tex {
     const gl = this.gl;
@@ -186,10 +198,12 @@ export class GLPipeline {
     const h = height ?? (src as { height: number }).height;
     const t = this.target(w, h);
     gl.bindTexture(gl.TEXTURE_2D, t.tex);
-    // Re-specify as RGBA8 from the source, then copy into the float target via a pass.
+    // Re-specify from the source (half float for 16-bit compositing, else RGBA8), then copy into the
+    // target via a pass.
     const tmp = gl.createTexture()!;
     gl.bindTexture(gl.TEXTURE_2D, tmp);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, src);
+    if (this.floatOutput) gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA16F, gl.RGBA, gl.HALF_FLOAT, src);
+    else gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, src);
     this.texParams();
     this.run(COPY_FRAG, { uTex: { tex: tmp, fbo: null as unknown as WebGLFramebuffer, width: w, height: h } }, t);
     gl.deleteTexture(tmp);
@@ -240,7 +254,9 @@ export class GLPipeline {
     gl.useProgram(prog);
     gl.bindVertexArray(this.vao);
     if (toScreen) {
-      if (this.canvas.width !== w || this.canvas.height !== h) {
+      if (this.floatOutput) {
+        if (gl.drawingBufferWidth !== w || gl.drawingBufferHeight !== h) this.resizeOutput(w, h);
+      } else if (this.canvas.width !== w || this.canvas.height !== h) {
         this.canvas.width = w;
         this.canvas.height = h;
       }
