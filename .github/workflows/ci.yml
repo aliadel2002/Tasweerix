@@ -31,8 +31,13 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Install FFmpeg
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+      # FFmpeg for media decode/encode; xmllint validates exported FCPXML.
+      - name: Install FFmpeg and xmllint
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg libxml2-utils
+
+      # OpenTimelineIO cross-checks exported/imported timelines (those tests skip without it).
+      - name: Install OpenTimelineIO
+        run: python3 -m pip install --user --break-system-packages OpenTimelineIO-Plugins
 
       # Chromium for headless rendering, pinned to the playwright-core version the CLI depends on.
       - name: Cache Chromium
