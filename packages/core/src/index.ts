@@ -19,3 +19,4 @@ export * from './plugin';
 export * from './path';
 export * from './xml';
 export * from './icc';
+export * from './hdr';

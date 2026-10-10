@@ -42,7 +42,6 @@ export function pixFmtDepth(pixFmt: string | undefined): number | undefined {
   return m[1] === 'f32' ? 32 : m[1] === 'f16' || m[1] === '48' || m[1] === '64' ? 16 : Number(m[1]);
 }
 
-/** Decodes the first frame of an image or video as 16-bit straight RGBA (`rgba64le`, 8 bytes per pixel). */
 /**
  * Decodes the first frame of an image or video as straight 16-bit RGBA (rgba64le), keeping more than
  * 8 bits per channel. Colors are converted from the embedded ICC profile (or the stream's primaries
@@ -60,6 +59,28 @@ export async function decodeImage16(file: string, gamut: CanvasGamut = 'srgb'): 
   const px = new Uint16Array(data.buffer, data.byteOffset, data.length / 2);
   const colorSpace = toGamut(px, sourceProfile(file, info), gamut);
   return { data, width, height, colorSpace };
+}
+
+/** True for HDR stills and frames: PQ / HLG transfer, or float pixels (OpenEXR, Radiance .hdr), which are linear. */
+export function isHdrSource(info: MediaInfo): boolean {
+  return info.colorTransfer === 'smpte2084' || info.colorTransfer === 'arib-std-b67' || /f(16|32)(le|be)?$/.test(info.pixFmt ?? '');
+}
+
+/**
+ * Decodes the first frame of an HDR source to linear float `gbrap` planes (1.0 = reference white,
+ * 203 nits). Float formats are taken as linear already.
+ */
+export async function decodeImageLinear(file: string): Promise<{ planes: Buffer; width: number; height: number; gamut: Gamut }> {
+  const info = await probe(file);
+  const t = info.colorTransfer;
+  const lin = t === 'smpte2084' || t === 'arib-std-b67';
+  // zimg converts float formats without clamping (swscale clamps them to 0..1).
+  const planes = await run(FFMPEG, ['-v', 'error', '-i', file, '-frames:v', '1', '-an', '-sn', '-dn', '-vf', `zscale${lin ? `=transferin=${t}:transfer=linear:npl=203` : ''},format=gbrapf32le`, '-f', 'rawvideo', '-pix_fmt', 'gbrapf32le', '-']);
+  let width = info.width ?? 0;
+  let height = info.height ?? 0;
+  if (width * height * 16 !== planes.length) [width, height] = [height, width];
+  if (!width || width * height * 16 !== planes.length) throw new Error(`Unexpected float frame size for ${file}: ${planes.length} bytes for ${width}x${height}`);
+  return { planes, width, height, gamut: primariesGamut(info.colorPrimaries) ?? (lin ? 'rec2020' : 'srgb') };
 }
 
 /** Where a source's colors are defined: an embedded ICC profile, a primaries tag, or nothing (sRGB). */
@@ -124,6 +145,7 @@ export function probe(file: string): Promise<MediaInfo> {
         codec: v?.codec_name ?? a?.codec_name,
         rotation: rot || undefined,
         bitDepth: v ? pixFmtDepth(v.pix_fmt) : undefined,
+        pixFmt: v?.pix_fmt,
         colorPrimaries: v?.color_primaries && v.color_primaries !== 'unknown' ? v.color_primaries : undefined,
         colorTransfer: v?.color_transfer && v.color_transfer !== 'unknown' ? v.color_transfer : undefined,
       };

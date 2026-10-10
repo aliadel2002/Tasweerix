@@ -18,7 +18,7 @@ import type { AssetProvider } from './assets';
 import { canSharePass, fusePointStages, getFilter, LUMA_TO_ALPHA, MIX_FRAG, type FilterContext, type FilterImpl, type PointStage } from './filters';
 import { GLPipeline, type Tex } from './gl';
 import { toCanvasPaint } from './paint';
-import { createSurface, ctx2d, depthSettings, gamutSettings, readRGBA16, SurfacePool, type Ctx2D, type Depth, type Surface } from './surface';
+import { createSurface, ctx2d, depthSettings, gamutSettings, readRGBA16, readRGBAF16, SurfacePool, type Ctx2D, type Depth, type Surface } from './surface';
 
 /** Everything a drawer needs to draw one node's own content. */
 export interface DrawContext {
@@ -73,6 +73,11 @@ export interface RendererOptions {
    * `color(display-p3 ...)` paints); sRGB content is converted into it. Default 'srgb'.
    */
   gamut?: CanvasGamut;
+  /**
+   * Extended range for HDR output: forces depth 16 and sRGB canvases, which (unlike P3 ones) keep
+   * values above 1 and wide-gamut colors as components outside 0..1. Read frames with `pixelsF16()`.
+   */
+  hdr?: boolean;
 }
 
 const BLEND: Record<string, GlobalCompositeOperation> = {
@@ -91,6 +96,7 @@ export class Renderer {
   glPrecision: 'auto' | 'half' | 'byte';
   readonly depth: Depth;
   readonly gamut: CanvasGamut;
+  readonly hdr: boolean;
   canvas: Surface;
   ctx: Ctx2D;
   private pool: SurfacePool;
@@ -108,10 +114,11 @@ export class Renderer {
     this.assets = opts.assets;
     this.scale = opts.scale ?? 1;
     this.motionBlurSamples = opts.motionBlurSamples ?? 10;
-    this.depth = opts.depth ?? 8;
+    this.hdr = !!opts.hdr;
+    this.depth = this.hdr ? 16 : (opts.depth ?? 8);
     this.glPrecision = this.depth === 16 ? 'half' : (opts.glPrecision ?? 'auto');
     this.canvas = opts.canvas ?? createSurface(1, 1);
-    this.gamut = opts.gamut ?? 'srgb';
+    this.gamut = this.hdr ? 'srgb' : (opts.gamut ?? 'srgb');
     this.ctx = ctx2d(this.canvas, depthSettings(this.depth, this.gamut));
     this.pool = new SurfacePool(1, 1, this.depth, this.gamut);
   }
@@ -185,6 +192,12 @@ export class Renderer {
   /** Reads the last rendered frame (in `gamut`). */
   pixels(): ImageData {
     return this.ctx.getImageData(0, 0, this.canvas.width, this.canvas.height, gamutSettings(this.gamut));
+  }
+
+  /** Reads the last rendered frame as half-float RGBA bits in extended sRGB (depth 16 only; for HDR). */
+  pixelsF16(): Uint16Array {
+    if (this.depth !== 16) throw new Error('pixelsF16 needs a Renderer with depth 16 or hdr');
+    return readRGBAF16(this.ctx, this.canvas.width, this.canvas.height);
   }
 
   /** Reads the last rendered frame as 16-bit straight RGBA (full precision when `depth` is 16). */

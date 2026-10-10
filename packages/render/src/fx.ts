@@ -67,6 +67,8 @@ export const fx = {
   glow: make<{ threshold: number; radius: number; intensity: number; color: string }>('glow'),
   dropShadow: make<{ color: string; blur: number; x: number; y: number; opacity: number }>('dropShadow'),
   vignette: make<{ amount: number; radius: number; softness: number; color: string }>('vignette'),
+  /** Rolls highlights above 1.0 (HDR) off toward white; `white` is the working value mapped to white. */
+  toneMap: make<{ knee: number; white: number }>('toneMap'),
   grain: make<{ amount: number; size: number; seed: number; animated: boolean }>('grain'),
   chromaticAberration: make<{ amount: number; angle: number; radial: boolean }>('chromaticAberration'),
   pixelate: make<{ size: number }>('pixelate'),

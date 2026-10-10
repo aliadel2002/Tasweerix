@@ -70,6 +70,34 @@ Pair `--gamut` with `--depth 16` where you can: a wider gamut spreads the same 8
 colors. Every video now also carries BT.709 color tags and is converted to YUV with the BT.709
 matrix, so players no longer guess (sRGB exports used to rely on that guess).
 
+### HDR (`--hdr pq` or `--hdr hlg`)
+
+`--hdr` writes HDR in BT.2020 with the PQ (HDR10) or HLG transfer. Compositing switches to
+extended-range half floats where 1.0 is SDR reference white, shown at 203 nits (ITU-R BT.2408), and
+anything brighter is a highlight:
+
+- `color(srgb 2 2 2)` paints about 5x white (around 1000 nits). Exposure in `fx.grade`, blur, opacity
+  and blends carry values above 1 through.
+- HDR sources stay HDR: PQ and HLG video and float stills (`.exr`, Radiance `.hdr`) are decoded to
+  linear light on the server at the same 203-nit white. P3 and BT.2020 colors are kept as
+  extended-sRGB values (negative components).
+- Video uses h265 by default for `.mp4`/`.mkv`; av1, vp9, prores and PNG sequences work too, all at
+  10 bits (16 in PNG). PQ video from h265 and av1 carries HDR10 mastering-display metadata;
+  `--hdr-peak <nits>` sets its peak (default 1000).
+- Stills (`tasweerix still --hdr pq`) are 16-bit PNG tagged with a cICP chunk, or 10-bit AVIF.
+- Without `--hdr`, HDR sources are tone mapped into SDR with a soft knee instead of clipping.
+  `fx.toneMap({ knee, white })` (layers) and `op.toneMap()` (photos) apply the same roll-off by hand.
+
+```sh
+tasweerix render index.ts -o out/hdr.mp4 --hdr pq --hdr-peak 1000
+tasweerix render index.ts -o out/hdr.mov --codec prores --hdr hlg
+tasweerix still poster.ts -o out/poster.avif --hdr pq
+```
+
+Limits: color filters other than grade (curves, LUTs, hue and similar) floor negative components,
+so wide-gamut colors that pass through them clip to sRGB in HDR. GIF, animated WebP, APNG, JPEG,
+WebP and TIFF have no HDR form and are refused.
+
 ### GPU and speed
 
 Export uses a hardware GPU for WebGL when one answers (`--gpu auto`, the default). It tries ANGLE on

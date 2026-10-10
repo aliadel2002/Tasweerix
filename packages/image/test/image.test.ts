@@ -147,6 +147,19 @@ describe('selections & retouch', () => {
     const out = heal(b, { from: [15, 15], to: [30, 30], radius: 6 });
     expect(px(out, 30, 30)[0]).toBeGreaterThan(0.5);
   });
+  it('toneMap rolls highlights off under white and leaves midtones alone', () => {
+    const b = createBitmap(3, 1);
+    b.data.set([0.5, 0.5, 0.5, 1, 1, 1, 1, 1, 2, 1, 0.5, 1]);
+    const out = applyOps(b, [op.toneMap()]).data;
+    expect(out[0]).toBeCloseTo(0.5, 5);
+    expect(out[4]).toBeGreaterThan(0.9);
+    expect(out[4]).toBeLessThan(1);
+    expect(out[8]).toBeLessThan(1);
+    expect(out[8]).toBeGreaterThan(out[4]!);
+    // Hue kept: the brightest channel leads, the others scale with it.
+    expect(out[9]).toBeLessThan(out[8]!);
+  });
+
   it('runs a full op pipeline', () => {
     const out = applyOps(gradient(80, 60), [op.autoWhiteBalance(), op.straighten(3), op.resize({ maxSize: 40 }), op.sharpen(), op.clarity(0.2), op.denoise({ radius: 1 }), op.vignette(0.3)]);
     expect(out.width).toBeLessThanOrEqual(40);

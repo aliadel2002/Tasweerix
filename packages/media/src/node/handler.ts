@@ -2,8 +2,8 @@ import { createReadStream, existsSync, statSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { extname, isAbsolute, normalize, resolve, sep } from 'node:path';
 import type { CanvasGamut } from '@tasweerix/core';
-import { decodeImage16, decodePcm, interleave, probe } from './ffmpeg';
-import { FrameServer } from './frames';
+import { decodeImage16, decodeImageLinear, decodePcm, interleave, isHdrSource, probe } from './ffmpeg';
+import { FrameServer, linearPlanesToFrame } from './frames';
 import { AnalysisCache, hostAnalyze } from './analysis';
 import { join } from 'node:path';
 
@@ -59,8 +59,8 @@ export interface MediaHandlerOptions {
 /**
  * HTTP handler for the /__tx media API used by browser pages:
  *   /__tx/probe?src=   → MediaInfo JSON
- *   /__tx/frame?src=&t=&w=&h=&client=&depth=&gamut=  → raw RGBA, or rgba64le with depth=16 (x-width / x-height / x-color-space headers)
- *   /__tx/image16?src=&gamut=          → rgba64le first frame of a high bit-depth source; 204 when the source is 8-bit
+ *   /__tx/frame?src=&t=&w=&h=&client=&depth=&gamut=&hdr=  → raw RGBA, rgba64le with depth=16, or half floats for HDR sources with hdr=1 (x-width / x-height / x-color-space / x-format headers)
+ *   /__tx/image16?src=&gamut=&hdr=     → rgba64le first frame of a high bit-depth source (half floats for an HDR source with hdr=1); 204 when the source is 8-bit
  *   /__tx/pcm?src=&rate=&channels=     → interleaved float32 little-endian PCM
  *   /__tx/analyze (GET ?kind=&src=&params= or POST { kind, src, params }) → host analysis JSON
  *   /__tx/cache?key=&src=              → analysis cache (GET / PUT)
@@ -114,19 +114,28 @@ export function createMediaHandler(opts: MediaHandlerOptions) {
         const w = url.searchParams.get('w');
         const h = url.searchParams.get('h');
         const depth = url.searchParams.get('depth') === '16' ? 16 : 8;
-        const f = await frames.frame(file, t, { width: w ? Number(w) : undefined, height: h ? Number(h) : undefined, client: url.searchParams.get('client') ?? '0', depth, gamut: gamutParam(url) });
-        res.writeHead(200, { 'content-type': 'application/octet-stream', 'x-width': String(f.width), 'x-height': String(f.height), 'x-color-space': f.colorSpace, 'access-control-expose-headers': 'x-width, x-height, x-color-space', 'cache-control': 'no-store' });
+        const f = await frames.frame(file, t, { width: w ? Number(w) : undefined, height: h ? Number(h) : undefined, client: url.searchParams.get('client') ?? '0', depth, gamut: gamutParam(url), hdr: url.searchParams.get('hdr') === '1' });
+        res.writeHead(200, { ...pixelHeaders(f.width, f.height, f.colorSpace, f.format), 'cache-control': 'no-store' });
         res.end(f.data);
         return true;
       }
       if (url.pathname === '/__tx/image16') {
+        const info = await probe(file);
+        if (isHdrSource(info)) {
+          // HDR stills (PQ / HLG, OpenEXR, Radiance): half floats for an HDR render, tone mapped otherwise.
+          const lin = await decodeImageLinear(file);
+          const f = linearPlanesToFrame(lin.planes, lin.width * lin.height, lin.gamut, { depth: 16, gamut: gamutParam(url), hdr: url.searchParams.get('hdr') === '1' });
+          res.writeHead(200, { ...pixelHeaders(lin.width, lin.height, f.colorSpace, f.format), 'cache-control': 'no-store' });
+          res.end(f.data);
+          return true;
+        }
         // Only worth the extra bytes when the source has more than 8 bits; the browser decodes the rest.
-        if (((await probe(file)).bitDepth ?? 8) <= 8) {
+        if ((info.bitDepth ?? 8) <= 8) {
           res.writeHead(204, { 'cache-control': 'no-store' }).end();
           return true;
         }
         const img = await decodeImage16(file, gamutParam(url));
-        res.writeHead(200, { 'content-type': 'application/octet-stream', 'x-width': String(img.width), 'x-height': String(img.height), 'x-color-space': img.colorSpace, 'access-control-expose-headers': 'x-width, x-height, x-color-space', 'cache-control': 'no-store' });
+        res.writeHead(200, { ...pixelHeaders(img.width, img.height, img.colorSpace, 'rgba64le'), 'cache-control': 'no-store' });
         res.end(img.data);
         return true;
       }
@@ -145,6 +154,17 @@ export function createMediaHandler(opts: MediaHandlerOptions) {
     return true;
   };
   return Object.assign(handler, { frames });
+}
+
+function pixelHeaders(width: number, height: number, colorSpace: CanvasGamut, format: string) {
+  return {
+    'content-type': 'application/octet-stream',
+    'x-width': String(width),
+    'x-height': String(height),
+    'x-color-space': colorSpace,
+    'x-format': format,
+    'access-control-expose-headers': 'x-width, x-height, x-color-space, x-format',
+  };
 }
 
 function gamutParam(url: URL): CanvasGamut {

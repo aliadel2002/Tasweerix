@@ -116,6 +116,21 @@ function embedPng(b: Uint8Array, icc: Uint8Array): Buffer {
   return Buffer.concat(parts);
 }
 
+/**
+ * Tags a PNG as HDR with a cICP chunk (BT.2020 primaries, PQ or HLG transfer, RGB, full range),
+ * which browsers and HDR viewers read in place of an ICC profile.
+ */
+export function embedCicp(file: Uint8Array, transfer: 'pq' | 'hlg'): Buffer {
+  if (sniff(file) !== 'png') throw new Error('embedCicp: not a PNG');
+  const parts: Uint8Array[] = [file.subarray(0, 8)];
+  for (const c of pngChunks(file)) {
+    if (c.type === 'iCCP' || c.type === 'sRGB' || c.type === 'gAMA' || c.type === 'cHRM' || c.type === 'cICP') continue;
+    parts.push(file.subarray(c.start, c.end));
+    if (c.type === 'IHDR') parts.push(pngChunk('cICP', new Uint8Array([9, transfer === 'pq' ? 16 : 18, 0, 1])));
+  }
+  return Buffer.concat(parts);
+}
+
 // ---------------------------------------------------------------- JPEG
 
 function* jpegSegments(

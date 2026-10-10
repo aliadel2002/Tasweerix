@@ -1,4 +1,5 @@
 import type { Bitmap } from './bitmap';
+import { extendedLinearToSrgb, extendedSrgbToLinear, toneMapLinear } from '@tasweerix/core';
 import { blur, clarity, dehaze, denoise, median, unsharp } from './filters';
 import { crop, flip, perspective, resize, rotate } from './geometry';
 import { resolveMask, type MaskSpec } from './masks';
@@ -67,6 +68,19 @@ registerPhotoOp('median', (b, p, s) => median(b, p.radius ?? 1, m(b, s)));
 registerPhotoOp('clone', (b, p) => clone(b, p as PatchOptions));
 registerPhotoOp('heal', (b, p) => heal(b, p as PatchOptions));
 registerPhotoOp('redEye', (b, p) => redEye(b, p.center, p.radius));
+registerPhotoOp('toneMap', (b, p) => {
+  const knee = Math.min(0.95, Math.max(0, p.knee ?? 0.6));
+  const white = Math.max(1e-3, p.white ?? 1);
+  const out = { ...b, data: new Float32Array(b.data) };
+  const d = out.data;
+  for (let i = 0; i < d.length; i += 4) {
+    const [r, g, bl] = toneMapLinear(...([0, 1, 2].map((c) => extendedSrgbToLinear(Math.max(0, d[i + c]!)) / white) as [number, number, number]), knee);
+    d[i] = extendedLinearToSrgb(r);
+    d[i + 1] = extendedLinearToSrgb(g);
+    d[i + 2] = extendedLinearToSrgb(bl);
+  }
+  return out;
+});
 registerPhotoOp('vignette', (b, p, s) => {
   const amount = p.amount ?? 0.4;
   const mk = m(b, s);
@@ -126,5 +140,7 @@ export const op = {
   heal: (p: PatchOptions): PhotoOp => ({ kind: 'heal', params: p }),
   redEye: (center: [number, number], radius: number): PhotoOp => ({ kind: 'redEye', params: { center, radius } }),
   vignette: (amount = 0.4, radius = 0.4, opts?: { mask?: MaskSpec }) => opFn('vignette')({ amount, radius }, opts),
+  /** Rolls highlights above 1.0 (HDR photos, pushed exposure) off toward white instead of clipping. */
+  toneMap: (p: { knee?: number; white?: number } = {}): PhotoOp => ({ kind: 'toneMap', params: p }),
   custom: (kind: string, params: Record<string, any> = {}, opts?: { mask?: MaskSpec }) => opFn(kind)(params, opts),
 };

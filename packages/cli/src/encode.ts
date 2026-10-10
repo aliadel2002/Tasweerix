@@ -1,8 +1,8 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
-import { buildIcc, convertGamut, type CanvasGamut, type Gamut } from '@tasweerix/core';
-import { embedIcc, FFMPEG } from '@tasweerix/media/node';
+import { buildIcc, convertGamut, encodeHdrFrame, masteringDisplay, type CanvasGamut, type Gamut, type HdrTransfer } from '@tasweerix/core';
+import { embedCicp, embedIcc, FFMPEG } from '@tasweerix/media/node';
 
 export type Codec = 'h264' | 'h265' | 'vp9' | 'av1' | 'prores' | 'gif' | 'png' | 'webp' | 'apng' | 'mjpeg';
 
@@ -31,7 +31,17 @@ export interface EncodeOptions {
    * sRGB. Default: the input gamut.
    */
   gamut?: Gamut;
+  /**
+   * HDR output: input frames are half-float RGBA in extended sRGB (1.0 = 203-nit reference white),
+   * written as BT.2020 with the PQ or HLG transfer at 10 bits (16 in PNG). Needs an HDR codec.
+   */
+  hdr?: HdrTransfer;
+  /** Peak luminance (nits) in the HDR10 mastering-display metadata (PQ). Default 1000. */
+  hdrPeak?: number;
 }
+
+/** Codecs that can carry HDR (10-bit or more, with PQ / HLG tags). PNG uses a cICP chunk. */
+export const HDR_CODECS: ReadonlySet<Codec> = new Set<Codec>(['h265', 'av1', 'vp9', 'prores', 'png']);
 
 /** Codecs whose output carries color tags, so it can be wider than sRGB. */
 export const TAGGED_CODECS: ReadonlySet<Codec> = new Set<Codec>(['h264', 'h265', 'av1', 'vp9', 'prores', 'png']);
@@ -54,27 +64,38 @@ const COLOR_TAGS: Record<Gamut, { primaries: string; matrix: string }> = {
  */
 function colorArgs(o: EncodeOptions): string[] {
   if (o.codec === 'png' || !TAGGED_CODECS.has(o.codec)) return [];
+  if (o.hdr) return ['-vf', 'scale=out_color_matrix=bt2020nc:out_range=tv', '-color_primaries', 'bt2020', '-color_trc', o.hdr === 'pq' ? 'smpte2084' : 'arib-std-b67', '-colorspace', 'bt2020nc', '-color_range', 'tv'];
   const t = COLOR_TAGS[outputGamut(o)];
   return ['-vf', `scale=out_color_matrix=${t.matrix}:out_range=tv`, '-color_primaries', t.primaries, '-color_trc', 'bt709', '-colorspace', t.matrix, '-color_range', 'tv'];
+}
+
+/** SVT-AV1 takes the mastering display as chromaticities and nits. */
+function svtMasteringDisplay(peak = 1000): string {
+  return `G(0.265,0.690)B(0.150,0.060)R(0.680,0.320)WP(0.3127,0.3290)L(${peak},0.0001)`;
+}
+
+/** The PNG files an output pattern names (a single file or a frame_%05d.png sequence). */
+function pngFiles(output: string): string[] {
+  return output.includes('%')
+    ? readdirSync(dirname(output))
+        .filter((f) => f.startsWith(basename(output).split('%')[0]!) && f.endsWith('.png'))
+        .map((f) => join(dirname(output), f))
+    : [output];
 }
 
 /** Embeds the gamut's ICC profile in written PNG files (a single file or a frame_%05d.png sequence). */
 export function tagPngOutput(output: string, gamut: Gamut): void {
   if (gamut === 'srgb') return;
   const icc = buildIcc(gamut);
-  const files = output.includes('%')
-    ? readdirSync(dirname(output))
-        .filter((f) => f.startsWith(basename(output).split('%')[0]!) && f.endsWith('.png'))
-        .map((f) => join(dirname(output), f))
-    : [output];
-  for (const f of files) writeFileSync(f, embedIcc(readFileSync(f), icc));
+  for (const f of pngFiles(output)) writeFileSync(f, embedIcc(readFileSync(f), icc));
 }
 
 /** Codecs that can store more than 8 bits per channel. h264 stays 8-bit (10-bit decoders are rare). */
 export const HIGH_DEPTH_CODECS: ReadonlySet<Codec> = new Set<Codec>(['png', 'prores', 'h265', 'av1', 'vp9']);
 
 /** Bits per channel the encoder actually stores for these options (8 or 16 input to ffmpeg). */
-export function storedDepth(o: Pick<EncodeOptions, 'codec' | 'depth' | 'keepDepth' | 'alpha'>): 8 | 16 {
+export function storedDepth(o: Pick<EncodeOptions, 'codec' | 'depth' | 'keepDepth' | 'alpha' | 'hdr'>): 8 | 16 {
+  if (o.hdr) return 16;
   // vp9 has no 10-bit alpha format.
   return o.depth === 16 && o.keepDepth !== false && HIGH_DEPTH_CODECS.has(o.codec) && !(o.codec === 'vp9' && o.alpha) ? 16 : 8;
 }
@@ -143,9 +164,9 @@ function codecArgs(o: EncodeOptions): string[] {
     case 'h264':
       return ['-c:v', 'libx264', '-preset', o.preset ?? 'medium', '-crf', String(crf ?? 18), '-pix_fmt', 'yuv420p', '-movflags', '+faststart'];
     case 'h265':
-      return ['-c:v', 'libx265', '-preset', o.preset ?? 'medium', '-crf', String(crf ?? 22), '-pix_fmt', hi ? 'yuv420p10le' : 'yuv420p', '-tag:v', 'hvc1', '-x265-params', 'log-level=error'];
+      return ['-c:v', 'libx265', '-preset', o.preset ?? 'medium', '-crf', String(crf ?? 22), '-pix_fmt', hi ? 'yuv420p10le' : 'yuv420p', '-tag:v', 'hvc1', '-x265-params', `log-level=error${o.hdr === 'pq' ? `:hdr10=1:master-display=${masteringDisplay(o.hdrPeak)}:max-cll=0,0` : ''}`];
     case 'av1':
-      return ['-c:v', 'libsvtav1', '-crf', String(crf ?? 32), '-preset', o.preset ?? '8', '-pix_fmt', hi ? 'yuv420p10le' : 'yuv420p'];
+      return ['-c:v', 'libsvtav1', '-crf', String(crf ?? 32), '-preset', o.preset ?? '8', '-pix_fmt', hi ? 'yuv420p10le' : 'yuv420p', ...(o.hdr === 'pq' ? ['-svtav1-params', `mastering-display=${svtMasteringDisplay(o.hdrPeak)}`] : [])];
     case 'vp9':
       return ['-c:v', 'libvpx-vp9', '-crf', String(crf ?? 30), '-b:v', '0', '-row-mt', '1', '-pix_fmt', o.alpha ? 'yuva420p' : hi ? 'yuv420p10le' : 'yuv420p'];
     case 'prores':
@@ -175,10 +196,11 @@ export class FrameEncoder {
   private readonly to: Gamut;
 
   constructor(readonly opts: EncodeOptions) {
+    if (opts.hdr && !HDR_CODECS.has(opts.codec)) throw new Error(`HDR output needs h265, av1, vp9, prores or png, not ${opts.codec}`);
     const stored = storedDepth(opts);
-    this.dither = opts.depth === 16 && stored === 8;
+    this.dither = opts.depth === 16 && stored === 8 && !opts.hdr;
     this.from = opts.inputGamut ?? 'srgb';
-    this.to = outputGamut(opts);
+    this.to = opts.hdr ? 'rec2020' : outputGamut(opts);
     const args = [
       '-y', '-v', 'error',
       '-f', 'rawvideo', '-pix_fmt', stored === 16 ? 'rgba64le' : 'rgba', '-s', `${opts.width}x${opts.height}`, '-r', String(opts.fps),
@@ -199,7 +221,12 @@ export class FrameEncoder {
 
   async write(rgba: Buffer | Uint8Array): Promise<void> {
     this.frames++;
-    if (this.from !== this.to) {
+    if (this.opts.hdr) {
+      // Half floats in extended sRGB → BT.2020 PQ / HLG signal, 16 bits.
+      const half = new Uint16Array(rgba.length / 2);
+      new Uint8Array(half.buffer).set(rgba);
+      rgba = new Uint8Array(encodeHdrFrame(half, this.opts.hdr, this.from).buffer);
+    } else if (this.from !== this.to) {
       // Converted on a copy: the caller may still hold the frame.
       if (this.opts.depth === 16) {
         const px = new Uint16Array(rgba.length / 2);
@@ -218,7 +245,10 @@ export class FrameEncoder {
   async finish(): Promise<void> {
     this.proc.stdin.end();
     await this.done;
-    if (this.opts.codec === 'png') tagPngOutput(this.opts.output, this.to);
+    if (this.opts.codec === 'png') {
+      if (this.opts.hdr) for (const f of pngFiles(this.opts.output)) writeFileSync(f, embedCicp(readFileSync(f), this.opts.hdr));
+      else tagPngOutput(this.opts.output, this.to);
+    }
   }
 
   abort(): void {

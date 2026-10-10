@@ -38,16 +38,35 @@ const Float16 = (globalThis as unknown as { Float16Array?: F16Ctor }).Float16Arr
  * 16-bit integers. Keeps more than 8 bits per channel when drawn into a float16 canvas. `colorSpace`
  * is the space the pixels are in; drawing into a canvas of another space converts them.
  */
-export function float16Surface(width: number, height: number, rgba: Float32Array | Uint16Array, colorSpace: CanvasGamut = 'srgb'): Surface {
+export function float16Surface(width: number, height: number, rgba: Float32Array | Uint16Array, colorSpace: CanvasGamut = 'srgb', extended = false): Surface {
   if (!Float16) throw new Error('Float16Array is not available in this browser (16-bit compositing needs Chromium 135+)');
   const k = rgba instanceof Uint16Array ? 1 / 65535 : 1;
   const px = new Float16(width * height * 4);
-  for (let i = 0; i < rgba.length; i++) px[i] = Math.min(1, Math.max(0, rgba[i]! * k));
+  // Extended range (HDR) keeps values above 1 and below 0 (wide-gamut colors in extended sRGB).
+  if (extended) for (let i = 0; i < rgba.length; i++) px[i] = (i & 3) === 3 ? Math.min(1, Math.max(0, rgba[i]! * k)) : rgba[i]! * k;
+  else for (let i = 0; i < rgba.length; i++) px[i] = Math.min(1, Math.max(0, rgba[i]! * k));
+  return putFloat16(width, height, px, colorSpace);
+}
+
+/** A float16 sRGB surface from raw half-float RGBA bits (extended range, as the HDR decode sends them). */
+export function halfSurface(width: number, height: number, bits: Uint16Array): Surface {
+  if (!Float16) throw new Error('Float16Array is not available in this browser (16-bit compositing needs Chromium 135+)');
+  const F16View = Float16 as unknown as new (buf: ArrayBufferLike, off: number, n: number) => ArrayLike<number>;
+  return putFloat16(width, height, new F16View(bits.buffer, bits.byteOffset, bits.length), 'srgb');
+}
+
+function putFloat16(width: number, height: number, px: ArrayLike<number>, colorSpace: CanvasGamut): Surface {
   const s = createSurface(width, height);
   const ctx = ctx2d(s, depthSettings(16, colorSpace));
   const ImageDataF16 = ImageData as unknown as new (data: unknown, w: number, h: number, settings: { pixelFormat: string; colorSpace?: string }) => ImageData;
   ctx.putImageData(new ImageDataF16(px, width, height, { pixelFormat: 'rgba-float16', colorSpace }), 0, 0);
   return s;
+}
+
+/** Reads a float16 canvas as raw half-float RGBA bits, keeping values outside 0..1 (HDR frames). */
+export function readRGBAF16(ctx: Ctx2D, width: number, height: number): Uint16Array {
+  const id = (ctx.getImageData as unknown as (x: number, y: number, w: number, h: number, s: { pixelFormat: string }) => { data: { buffer: ArrayBufferLike; byteOffset: number; length: number } })(0, 0, width, height, { pixelFormat: 'rgba-float16' });
+  return new Uint16Array(id.data.buffer, id.data.byteOffset, id.data.length);
 }
 
 /** Reads a float16 canvas as 16-bit straight RGBA (0..65535, clipped) in `colorSpace`. */
