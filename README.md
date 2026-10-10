@@ -190,8 +190,9 @@ the Messages API, and drive the studio with Playwright. No test needs network ac
   inspector and must be edited in code.
 - 3D renders through WebGL2: one shadow-casting light, no image-based lighting or reflections, no
   skeletal animation or morph targets from glTF files. Without a GPU, exports use SwiftShader.
-- Stabilization corrects translation, rotation and zoom (a similarity model). It does not correct
-  rolling-shutter wobble or perspective changes, and tracking follows points, not planes.
+- Stabilization corrects translation, rotation and zoom, and with `model: 'perspective'` also
+  perspective (keystone) changes. It does not correct rolling-shutter wobble, and tracking follows
+  points, not planes.
 - AI features need credentials on the host (Claude) and a speech-to-text provider (whisper.cpp or a
   plugin). Answers are cached; delete `.tasweerix/cache` or pass a `variant` to regenerate.
 - Timeline import keeps edits, speed, dissolves, titles, audio gain and markers. Effects, transforms,
