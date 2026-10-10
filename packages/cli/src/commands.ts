@@ -194,7 +194,7 @@ export function registerCommands(program: Command): void {
     .command('init')
     .description('Create a new project from a template')
     .argument('[dir]', 'project directory', 'my-tasweerix-project')
-    .option('-t, --template <name>', 'video | photo | audio | motion | arabic', 'video')
+    .option('-t, --template <name>', 'video | photo | audio | motion | arabic | 3d', 'video')
     .action(async (dir: string, o) => {
       const { scaffold } = await import('./templates');
       const files = scaffold(resolve(dir), o.template);
@@ -208,8 +208,9 @@ export function registerCommands(program: Command): void {
     .argument('<entry>')
     .option('-c, --comp <name>')
     .option('--props <json>')
+    .option('--root <dir>', 'project root for assets')
     .action(async (entry: string, o) => {
-      const { comp } = await loadComposition(entry, { comp: o.comp, props: parseProps(o.props) });
+      const { comp } = await loadComposition(entry, { comp: o.comp, props: parseProps(o.props), root: o.root });
       console.log(JSON.stringify(comp.toJSON(), null, 2));
     });
 }

@@ -1,0 +1,1 @@
+{ "name": "example-ai", "private": true, "type": "module", "dependencies": { "tasweerix": "workspace:*" } }

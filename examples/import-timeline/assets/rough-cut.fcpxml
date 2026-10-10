@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE fcpxml>
+<!-- A rough cut as Final Cut Pro exports it: the media paths point at the editor's machine. -->
+<fcpxml version="1.10">
+  <resources>
+    <format id="r1" name="FFVideoFormat720p30" frameDuration="100/3000s" width="1280" height="720"/>
+    <asset id="r2" name="fractal" start="0s" duration="3s" hasVideo="1" format="r1"><media-rep kind="original-media" src="file:///Users/editor/Footage/fractal.mp4"/></asset>
+    <asset id="r3" name="life" start="0s" duration="3s" hasVideo="1" format="r1"><media-rep kind="original-media" src="file:///Users/editor/Footage/life.mp4"/></asset>
+    <asset id="r4" name="flow" start="0s" duration="3s" hasVideo="1" format="r1"><media-rep kind="original-media" src="file:///Users/editor/Footage/flow.mp4"/></asset>
+    <asset id="r5" name="music" start="0s" duration="8s" hasAudio="1" audioSources="1" audioChannels="2" audioRate="44100"><media-rep kind="original-media" src="file:///Users/editor/Music/music.mp3"/></asset>
+    <effect id="r6" name="Basic Title" uid=".../Titles.localized/Bumper:Opener.localized/Basic Title.localized/Basic Title.moti"/>
+  </resources>
+  <library>
+    <event name="Promo">
+      <project name="Rough Cut">
+        <sequence format="r1" duration="7s" tcStart="3600s" tcFormat="NDF" audioLayout="stereo" audioRate="48k">
+          <spine>
+            <asset-clip ref="r2" offset="3600s" name="Fractal" start="0s" duration="2500/1000s">
+              <title ref="r6" lane="1" offset="1/2s" name="Title" start="0s" duration="2s"><text><text-style ref="ts1">Imported from Final Cut</text-style></text></title>
+              <asset-clip ref="r5" lane="-1" offset="0s" name="Music" start="0s" duration="7s"><adjust-volume amount="-8dB"/></asset-clip>
+              <marker start="2s" duration="1/30s" value="Cut to life"/>
+            </asset-clip>
+            <transition name="Cross Dissolve" offset="3602s" duration="1s"/>
+            <asset-clip ref="r3" offset="3602500/1000s" name="Life" start="1/2s" duration="2s"/>
+            <asset-clip ref="r4" offset="3604500/1000s" name="Flow" start="1/2s" duration="2500/1000s">
+              <timeMap><timept time="1/2s" value="1/2s" interp="linear"/><timept time="3s" value="1750/1000s" interp="linear"/></timeMap>
+            </asset-clip>
+          </spine>
+        </sequence>
+      </project>
+    </event>
+  </library>
+</fcpxml>

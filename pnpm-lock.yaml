@@ -48,6 +48,18 @@ importers:
         specifier: ^10.25.1
         version: 10.29.8
 
+  examples/3d-title:
+    dependencies:
+      tasweerix:
+        specifier: workspace:*
+        version: link:../../packages/tasweerix
+
+  examples/ai:
+    dependencies:
+      tasweerix:
+        specifier: workspace:*
+        version: link:../../packages/tasweerix
+
   examples/arabic-kinetic:
     dependencies:
       tasweerix:
@@ -78,6 +90,12 @@ importers:
         specifier: workspace:*
         version: link:../../packages/tasweerix
 
+  examples/import-timeline:
+    dependencies:
+      tasweerix:
+        specifier: workspace:*
+        version: link:../../packages/tasweerix
+
   examples/photo-retouch:
     dependencies:
       tasweerix:
@@ -97,6 +115,12 @@ importers:
         version: link:../../packages/tasweerix
 
   examples/smart-edit:
+    dependencies:
+      tasweerix:
+        specifier: workspace:*
+        version: link:../../packages/tasweerix
+
+  examples/stabilize:
     dependencies:
       tasweerix:
         specifier: workspace:*
@@ -299,6 +323,9 @@ importers:
       '@tasweerix/image':
         specifier: workspace:*
         version: link:../image
+      '@tasweerix/interchange':
+        specifier: workspace:*
+        version: link:../interchange
       '@tasweerix/media':
         specifier: workspace:*
         version: link:../media

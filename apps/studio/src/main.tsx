@@ -401,7 +401,7 @@ function App() {
       </aside>
 
       <main class="stage">
-        <div class="viewport" style={{ aspectRatio: `${dims.w} / ${dims.h}` }}>
+        <div class="viewport" style={{ aspectRatio: `${dims.w} / ${dims.h}`, '--ar': String(dims.w / dims.h) } as Record<string, string>}>
           <canvas ref={canvasRef} class={info?.kind === 'still' || !info ? 'checker' : 'checker'} />
           <svg class="overlay" viewBox={`0 0 ${dims.w} ${dims.h}`} onPointerDown={onCanvasDown as never}>
             {guides && (

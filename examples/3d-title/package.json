@@ -1,0 +1,1 @@
+{ "name": "example-3d-title", "private": true, "type": "module", "dependencies": { "tasweerix": "workspace:*" } }

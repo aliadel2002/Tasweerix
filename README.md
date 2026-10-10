@@ -1,7 +1,8 @@
 # Tasweerix
 
 **A code-first media engine.** You write TypeScript that describes edits and animations. Tasweerix
-renders it to video, photos, audio, motion graphics and vector illustrations, all from one scene graph.
+renders it to video, photos, audio, motion graphics, 3D scenes and vector illustrations, all from one
+scene graph.
 
 ```ts
 import { composition, video, transition, fx, text, textFx, audio, motion } from 'tasweerix';
@@ -42,7 +43,10 @@ tasweerix studio .                                # live editor with two-way edi
 | **Typography** | HarfBuzz shaping and the Unicode bidi algorithm. **Arabic and other RTL or joining scripts animate letter by letter without breaking their joined forms.** Kashida stretching and Arabic-Indic digits are included. |
 | **Smart editing** | Silence jump-cuts, beat detection and beat-synced montages, scene detection, loudness matching and leveling, and auto-ducking. Results are plain cut lists that stay editable as code. |
 | **Studio** | A web editor with live preview, timeline, inspector and code editor. Dragging on the canvas, trimming or moving clips on the timeline, moving keyframes or editing the inspector **rewrites your source code** and keeps its formatting. |
-| **Interchange** | Export the edit to **FCPXML** (Final Cut Pro, DaVinci Resolve) or **OpenTimelineIO**. Graphics can optionally be rendered as a ProRes 4444 alpha layer. |
+| **3D** | Real 3D scenes as layers: boxes, spheres, tori, extruded SVG paths, **extruded Arabic and Latin text** shaped by HarfBuzz, glTF/GLB and OBJ models. Metalness/roughness materials, textures (images, live video, any 2D layer), directional lights with soft shadows, point lights, fog, animated cameras with cuts, and After Effects-style 3D layers. Rendered with WebGL2. |
+| **Stabilization and tracking** | Pure-TypeScript computer vision (corner detection, pyramidal optical flow, RANSAC). Smooth or tripod-lock shaky footage with automatic edge cropping, and pin graphics to moving objects with point tracking. |
+| **AI** | Claude writes and reads in your builds: generated titles and copy, structured JSON, image and video-frame descriptions. Speech becomes word-timed captions (translated if you like), transcript-based cuts and chapter markers. The **assistant** edits your project code from a sentence, in the CLI and in the studio. Answers are cached so renders stay deterministic; providers are pluggable. |
+| **Interchange** | Export the edit to **FCPXML** (Final Cut Pro, DaVinci Resolve), **FCP7 XML** (Premiere Pro), **OpenTimelineIO** or **EDL**, and **import** edits from all four as editable TypeScript or at build time. Graphics can optionally be rendered as a ProRes 4444 alpha layer. |
 
 ## Quick start
 
@@ -51,7 +55,7 @@ detected automatically, or set `TASWEERIX_CHROMIUM`).
 
 ```sh
 pnpm install
-pnpm tasweerix init my-video -t video      # templates: video | photo | audio | motion | arabic
+pnpm tasweerix init my-video -t video      # templates: video | photo | audio | motion | arabic | 3d
 pnpm tasweerix studio my-video             # open http://127.0.0.1:3000
 pnpm tasweerix render my-video/index.ts -o my-video/out/video.mp4
 ```
@@ -70,10 +74,17 @@ Inside this repository, `pnpm tasweerix <command>` runs the CLI from source. No 
 | `batch <entry> -i "photos/*.jpg"` | Apply one edit script to many files. Each render gets `props.src`. |
 | `cuts <file> --mode silence\|shots\|beats` | Suggest an edit and print it as code. |
 | `analyze <file>` | Loudness, true peak, tempo, beats and silences. |
-| `export-timeline <entry> -f fcpxml\|otio` | Export the edit for Final Cut Pro, Resolve or OTIO tools (add `--graphics`). |
+| `export-timeline <entry> -f fcpxml\|otio\|xmeml\|edl` | Export the edit for Final Cut Pro, Resolve, Premiere or OTIO tools (add `--graphics`). |
+| `import-timeline <file> -o <dir>` | Turn an FCPXML, OTIO, FCP7 XML or EDL edit into an editable project, relinking media. |
+| `stabilize <file>` | Render a stabilized copy (`--mode smooth\|lock`, `--analyze` to measure only). |
+| `track <file> --at x,y --time t` | Track a point and print its path as keyframes. |
+| `ai "<request>"` | Ask the assistant to edit the project's code (`--dry-run` shows a diff). |
+| `transcribe <file>` | Speech to `.srt`/`.vtt`/`.json`, optionally `--translate <language>`. |
 | `inspect <entry>` | Print the composition tree as JSON. |
 | `probe <file>` | Show media info. |
 | `init [dir] -t <template>` | Scaffold a project. |
+
+Plugins add commands too: put them in a `tasweerix.config.ts` (see [Plugins](docs/plugins.md)).
 
 ## Concepts in one minute
 
@@ -101,6 +112,9 @@ See [`docs/`](docs) for guides and the API reference:
 - [Motion graphics and typography (including Arabic/RTL)](docs/motion-and-type.md)
 - [Illustration and SVG](docs/illustration.md)
 - [Smart editing](docs/smart.md)
+- [3D scenes](docs/3d.md)
+- [Stabilization and tracking](docs/vision.md)
+- [AI features](docs/ai.md)
 - [Studio and two-way editing](docs/studio.md)
 - [Export, interchange and the CLI](docs/export.md)
 - [Plugins](docs/plugins.md)
@@ -119,10 +133,15 @@ See [`docs/`](docs) for guides and the API reference:
 | [`examples/smart-edit`](examples/smart-edit) | Auto jump-cut, ducking under the voice and a beat-synced montage. |
 | [`examples/podcast`](examples/podcast) | A voice chain, music bed ducking and mastering to −16 LUFS. |
 | [`examples/data-viz`](examples/data-viz) | Animated line, donut and bar charts, counters and callouts, driven by props. |
+| [`examples/3d-title`](examples/3d-title) | Extruded Arabic and Latin 3D type, shadows, fog, an orbiting camera and a 2D card in 3D space. |
+| [`examples/stabilize`](examples/stabilize) | Handheld footage beside its tripod-locked version, with a label pinned by point tracking. |
+| [`examples/import-timeline`](examples/import-timeline) | A Final Cut Pro rough cut imported at build time, relinked, graded and finished in code. |
+| [`examples/ai`](examples/ai) | A title written from a video frame, translated captions from speech and chapter markers (needs credentials). |
 
 Render any example from the repository root, for example
-`pnpm tasweerix render examples/promo/index.ts -o out/promo.mp4 -j 3`. The Arabic examples use the bundled
-fonts in `assets/fonts`, so pass `--root .` for them.
+`pnpm tasweerix render examples/promo/index.ts -o out/promo.mp4 -j 3`. The Arabic, 3D, AI and
+timeline-import examples use files from elsewhere in the repository (fonts in `assets/fonts`, footage in
+other examples), so pass `--root .` for them.
 
 ## Packages
 
@@ -138,8 +157,11 @@ fonts in `assets/fonts`, so pass `--root .` for them.
 | `@tasweerix/motion` | Kinetic typography, behaviors, morphing, particles, charts and presets. |
 | `@tasweerix/illustrate` | Vector tools, generative art, SVG import and export. |
 | `@tasweerix/smart` | Analysis-driven editing. |
+| `@tasweerix/3d` | WebGL2 3D renderer, geometry, extrusion and 3D text, glTF/OBJ loaders, 3D nodes. |
+| `@tasweerix/vision` | Feature tracking, optical flow, stabilization and point tracking. |
+| `@tasweerix/ai` | Claude generation and vision, speech to text, captions, transcript cuts, the code assistant. |
 | `@tasweerix/codemod` | GUI edits turned into source code edits. |
-| `@tasweerix/interchange` | FCPXML and OTIO export. |
+| `@tasweerix/interchange` | FCPXML, OTIO, FCP7 XML and EDL import and export. |
 | `@tasweerix/cli` | The `tasweerix` command, export pipeline and studio server. |
 | `apps/studio` | Studio UI (Preact and CodeMirror 6). |
 
@@ -148,11 +170,13 @@ fonts in `assets/fonts`, so pass `--root .` for them.
 ```sh
 pnpm install
 pnpm typecheck     # strict TypeScript across all packages
-pnpm test          # unit, pixel (headless Chromium), DSP, interchange and studio end-to-end tests
+pnpm test          # unit, pixel (headless Chromium + WebGL2), DSP, vision, interchange, AI and studio end-to-end tests
 ```
 
-The tests render real frames in headless Chromium, decode real media with FFmpeg, read OTIO output back
-with OpenTimelineIO (when it is installed), and drive the studio with Playwright.
+The tests render real frames in headless Chromium, decode real media with FFmpeg, measure stabilization
+against footage with known shake, read timelines written by OpenTimelineIO's adapters (and check that
+they read ours, when OpenTimelineIO is installed), exercise the Claude provider against a local stub of
+the Messages API, and drive the studio with Playwright. No test needs network access or API keys.
 
 ## Limitations
 
@@ -164,7 +188,14 @@ with OpenTimelineIO (when it is installed), and drive the studio with Playwright
 - The audio DSP is solid but basic next to dedicated tools, and there is no VST/AU hosting.
 - Two-way editing only rewrites values written as literals. Computed values are flagged in the
   inspector and must be edited in code.
-- Not in v1 (plugin hooks are ready): AI features, true 3D scenes, stabilization and tracking, and timeline *import*.
+- 3D renders through WebGL2: one shadow-casting light, no image-based lighting or reflections, no
+  skeletal animation or morph targets from glTF files. Without a GPU, exports use SwiftShader.
+- Stabilization corrects translation, rotation and zoom (a similarity model). It does not correct
+  rolling-shutter wobble or perspective changes, and tracking follows points, not planes.
+- AI features need credentials on the host (Claude) and a speech-to-text provider (whisper.cpp or a
+  plugin). Answers are cached; delete `.tasweerix/cache` or pass a `variant` to regenerate.
+- Timeline import keeps edits, speed, dissolves, titles, audio gain and markers. Effects, transforms,
+  color corrections, multicam and variable speed ramps are listed as not imported.
 
 ## License
 

@@ -1,0 +1,1 @@
+{ "name": "example-stabilize", "private": true, "type": "module", "dependencies": { "tasweerix": "workspace:*" } }
