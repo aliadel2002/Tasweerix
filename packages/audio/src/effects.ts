@@ -6,6 +6,7 @@ import { convolverProcessor, reverbProcessor } from './dsp/reverb';
 import { denoiseProcessor, timeStretch } from './dsp/stretch';
 import { bitcrushProcessor, delayProcessor, distortionProcessor, gainProcessor, modulationProcessor, phaserProcessor, stereoProcessor } from './dsp/time';
 import { integratedLoudness } from './loudness';
+import { pluginEffectSpec } from './plugin-host';
 
 const registry = new Map<string, ProcessorFactory>();
 export function registerAudioEffect(kind: string, factory: ProcessorFactory): void {
@@ -105,5 +106,10 @@ export const afx = {
   stretch: (factor: number) => fxSpec('stretch', { factor }),
   /** Sidechain ducking under another clip or bus. */
   duck: (under: AudioClip | string, p: { amount?: number; threshold?: number; attack?: number; release?: number } = {}): AudioEffectSpec => ({ ...fxSpec('duck', p), sidechain: under }),
+  /**
+   * A third-party VST3, CLAP, AU, LV2 or LADSPA plugin, hosted out of process (Node only).
+   *   afx.plugin('/usr/lib/lv2/amp-swh.lv2', { params: { gain: -6 } }) · afx.plugin('Valhalla Supermassive', { tail: 8 })
+   */
+  plugin: pluginEffectSpec,
   custom: (kind: string, params: Record<string, unknown> = {}) => fxSpec(kind, params),
 };
