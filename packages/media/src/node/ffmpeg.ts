@@ -1,5 +1,9 @@
+import { isRawPath } from '../formats';
 import { spawn } from 'node:child_process';
-import type { MediaInfo } from '@tasweerix/core';
+import { readFileSync } from 'node:fs';
+import { convertRGBA16, gamutProfile, parseIcc, type CanvasGamut, type Gamut, type IccProfile, type MediaInfo } from '@tasweerix/core';
+import { extractIcc } from './icc';
+
 
 export const FFMPEG = process.env.TASWEERIX_FFMPEG ?? 'ffmpeg';
 export const FFPROBE = process.env.TASWEERIX_FFPROBE ?? 'ffprobe';
@@ -39,8 +43,13 @@ export function pixFmtDepth(pixFmt: string | undefined): number | undefined {
   return m[1] === 'f32' ? 32 : m[1] === 'f16' || m[1] === '48' || m[1] === '64' ? 16 : Number(m[1]);
 }
 
-/** Decodes the first frame of an image or video as 16-bit straight RGBA (`rgba64le`, 8 bytes per pixel). */
-export async function decodeImage16(file: string): Promise<{ data: Buffer; width: number; height: number }> {
+/**
+ * Decodes the first frame of an image or video as straight 16-bit RGBA (rgba64le), keeping more than
+ * 8 bits per channel. Colors are converted from the embedded ICC profile (or the stream's primaries
+ * tag) into `gamut`; untagged sources are taken as sRGB and returned unchanged. `colorSpace` says
+ * which space the pixels are in.
+ */
+export async function decodeImage16(file: string, gamut: CanvasGamut = 'srgb'): Promise<{ data: Buffer; width: number; height: number; colorSpace: CanvasGamut }> {
   const info = await probe(file);
   const data = await run(FFMPEG, ['-v', 'error', '-i', file, '-frames:v', '1', '-an', '-sn', '-dn', '-f', 'rawvideo', '-pix_fmt', 'rgba64le', '-']);
   let width = info.width ?? 0;
@@ -48,7 +57,61 @@ export async function decodeImage16(file: string): Promise<{ data: Buffer; width
   // ffmpeg applies display rotation; fall back to the stored size if the frame came out unrotated.
   if (width * height * 8 !== data.length && height * width * 8 === data.length) [width, height] = [height, width];
   if (!width || width * height * 8 !== data.length) throw new Error(`Unexpected 16-bit frame size for ${file}: ${data.length} bytes for ${width}x${height}`);
-  return { data, width, height };
+  const px = new Uint16Array(data.buffer, data.byteOffset, data.length / 2);
+  const colorSpace = toGamut(px, sourceProfile(file, info), gamut);
+  return { data, width, height, colorSpace };
+}
+
+/** True for HDR stills and frames: PQ / HLG transfer, or float pixels (OpenEXR, Radiance .hdr), which are linear. */
+export function isHdrSource(info: MediaInfo): boolean {
+  return info.colorTransfer === 'smpte2084' || info.colorTransfer === 'arib-std-b67' || /f(16|32)(le|be)?$/.test(info.pixFmt ?? '');
+}
+
+/**
+ * Decodes the first frame of an HDR source to linear float `gbrap` planes (1.0 = reference white,
+ * 203 nits). Float formats are taken as linear already.
+ */
+export async function decodeImageLinear(file: string): Promise<{ planes: Buffer; width: number; height: number; gamut: Gamut }> {
+  const info = await probe(file);
+  const t = info.colorTransfer;
+  const lin = t === 'smpte2084' || t === 'arib-std-b67';
+  // zimg converts float formats without clamping (swscale clamps them to 0..1).
+  const planes = await run(FFMPEG, ['-v', 'error', '-i', file, '-frames:v', '1', '-an', '-sn', '-dn', '-vf', `zscale${lin ? `=transferin=${t}:transfer=linear:npl=203` : ''},format=gbrapf32le`, '-f', 'rawvideo', '-pix_fmt', 'gbrapf32le', '-']);
+  let width = info.width ?? 0;
+  let height = info.height ?? 0;
+  if (width * height * 16 !== planes.length) [width, height] = [height, width];
+  if (!width || width * height * 16 !== planes.length) throw new Error(`Unexpected float frame size for ${file}: ${planes.length} bytes for ${width}x${height}`);
+  return { planes, width, height, gamut: primariesGamut(info.colorPrimaries) ?? (lin ? 'rec2020' : 'srgb') };
+}
+
+/** Where a source's colors are defined: an embedded ICC profile, a primaries tag, or nothing (sRGB). */
+function sourceProfile(file: string, info: MediaInfo): IccProfile | Gamut | undefined {
+  let bytes: Uint8Array | undefined;
+  try {
+    bytes = readFileSync(file);
+  } catch {
+    bytes = undefined;
+  }
+  const icc = bytes && extractIcc(bytes);
+  if (icc) {
+    const p = parseIcc(icc);
+    if (p) return p;
+    console.warn(`[tasweerix] ${file}: embedded ICC profile is not a matrix/TRC profile; colors are taken as sRGB`);
+  }
+  return primariesGamut(info.colorPrimaries);
+}
+
+/** The gamut a primaries tag names, when the pipeline knows it. */
+export function primariesGamut(tag: string | undefined): Gamut | undefined {
+  return tag === 'bt2020' ? 'rec2020' : tag === 'smpte432' ? 'display-p3' : tag === 'bt709' ? 'srgb' : undefined;
+}
+
+/** Converts pixels in place into `target` and returns the space they end up in. */
+function toGamut(px: Uint16Array, source: IccProfile | Gamut | undefined, target: CanvasGamut): CanvasGamut {
+  if (source === undefined || source === 'srgb') return 'srgb';
+  if (source === target) return target;
+  convertRGBA16(px, typeof source === 'string' ? gamutProfile(source) : source, target);
+  return target;
 }
 
 const probeCache = new Map<string, Promise<MediaInfo>>();
@@ -58,9 +121,14 @@ export function probe(file: string): Promise<MediaInfo> {
   let p = probeCache.get(file);
   if (!p) {
     p = (async () => {
+      if (isRawPath(file)) {
+        const { probeRaw } = await import('./raw');
+        const r = await probeRaw(file);
+        return { width: r.width, height: r.height, hasVideo: true, hasAudio: false, codec: 'raw', bitDepth: 16 };
+      }
       const out = await run(FFPROBE, ['-v', 'error', '-print_format', 'json', '-show_streams', '-show_format', file]);
       const j = JSON.parse(out.toString()) as {
-        streams: { codec_type: string; codec_name?: string; pix_fmt?: string; width?: number; height?: number; r_frame_rate?: string; avg_frame_rate?: string; duration?: string; sample_rate?: string; channels?: number; tags?: Record<string, string>; side_data_list?: { rotation?: number }[]; disposition?: { attached_pic?: number } }[];
+        streams: { codec_type: string; codec_name?: string; pix_fmt?: string; width?: number; height?: number; r_frame_rate?: string; avg_frame_rate?: string; duration?: string; sample_rate?: string; channels?: number; tags?: Record<string, string>; side_data_list?: { rotation?: number }[]; color_primaries?: string; color_transfer?: string; disposition?: { attached_pic?: number } }[];
         format: { duration?: string; format_name?: string };
       };
       const v = j.streams.find((s) => s.codec_type === 'video' && !s.disposition?.attached_pic);
@@ -83,6 +151,9 @@ export function probe(file: string): Promise<MediaInfo> {
         codec: v?.codec_name ?? a?.codec_name,
         rotation: rot || undefined,
         bitDepth: v ? pixFmtDepth(v.pix_fmt) : undefined,
+        pixFmt: v?.pix_fmt,
+        colorPrimaries: v?.color_primaries && v.color_primaries !== 'unknown' ? v.color_primaries : undefined,
+        colorTransfer: v?.color_transfer && v.color_transfer !== 'unknown' ? v.color_transfer : undefined,
       };
     })();
     probeCache.set(file, p);

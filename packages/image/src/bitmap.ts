@@ -1,3 +1,4 @@
+import { halfToFloatTable } from '@tasweerix/core';
 /**
  * Straight-alpha float RGBA image (sRGB-encoded). Color is nominally 0..1 but may exceed 1 between ops
  * (highlight headroom); alpha stays 0..1. `toRGBA8` clips at the output edge.
@@ -37,6 +38,14 @@ export function fromRGBA8(data: Uint8ClampedArray | Uint8Array, width: number, h
 export function fromRGBA16(data: Uint16Array, width: number, height: number): Bitmap {
   const out = new Float32Array(width * height * 4);
   for (let i = 0; i < out.length; i++) out[i] = data[i]! / 65535;
+  return { width, height, data: out };
+}
+
+/** Half-float RGBA bits (HDR decode, extended sRGB) → float bitmap, keeping values above 1. */
+export function fromHalf(bits: Uint16Array, width: number, height: number): Bitmap {
+  const t = halfToFloatTable();
+  const out = new Float32Array(width * height * 4);
+  for (let i = 0; i < out.length; i++) out[i] = t[bits[i]!]!;
   return { width, height, data: out };
 }
 

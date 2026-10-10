@@ -51,7 +51,8 @@ tasweerix studio .                                # live editor with two-way edi
 ## Quick start
 
 Requirements: Node ≥ 20, pnpm, FFmpeg/ffprobe on `PATH`, and a Chromium for exports (Playwright's is
-detected automatically, or set `TASWEERIX_CHROMIUM`).
+detected automatically, or set `TASWEERIX_CHROMIUM`). Camera RAW files also need LibRaw's `dcraw_emu`
+(`libraw-bin` on Debian and Ubuntu, `libraw` on Homebrew).
 
 ```sh
 pnpm install
@@ -66,8 +67,8 @@ Inside this repository, `pnpm tasweerix <command>` runs the CLI from source. No 
 
 | Command | Purpose |
 | --- | --- |
-| `render <entry> -o out.mp4` | Render video, animated images or a PNG sequence. Codecs: `h264`, `h265`, `vp9`, `av1`, `prores`, `gif`, `webp`, `apng`, `png`. Options include `-j` parallel workers (default one per CPU core, up to 4), `--gpu auto\|on\|off`, `--depth 8\|16`, `--range`, `--scale`, `--transparent` and `--props '{…}'`. |
-| `still <entry> -o out.png` | Render one frame to PNG, TIFF, JPG, WebP or AVIF (photos, thumbnails, posters). `--depth 16` keeps 16 bits in PNG and TIFF and 10 bits in AVIF. |
+| `render <entry> -o out.mp4` | Render video, animated images or a PNG sequence. Codecs: `h264`, `h265`, `vp9`, `av1`, `prores`, `gif`, `webp`, `apng`, `png`. Options include `-j` parallel workers (default one per CPU core, up to 4), `--gpu auto\|on\|off`, `--depth 8\|16`, `--gamut srgb\|p3\|rec2020`, `--hdr pq\|hlg`, `--range`, `--scale`, `--transparent` and `--props '{…}'`. |
+| `still <entry> -o out.png` | Render one frame to PNG, TIFF, JPG, WebP or AVIF (photos, thumbnails, posters). `--depth 16` keeps 16 bits in PNG and TIFF and 10 bits in AVIF; `--gamut p3` embeds a Display P3 profile; `--hdr pq` writes an HDR PNG or AVIF. |
 | `audio <entry> -o mix.mp3` | Render the mix to wav, mp3, flac, aac, ogg or opus, with optional `--stems`. |
 | `svg <entry> -o frame.svg` | Export a frame as vector SVG. Text is converted to glyph outlines. |
 | `studio [dir]` | Open the web studio. |
@@ -186,8 +187,12 @@ the Messages API, and drive the studio with Playwright. No test needs network ac
 - Studio preview playback of heavy compositions may run below real time. Exports are always exact.
 - High bit depth is opt in: `--depth 16` composites at half-float and writes 16-bit PNG/TIFF or
   10-bit ProRes, h265, av1, vp9 (without alpha) and AVIF, with dithered 8-bit for other formats. It is
-  about 1.75x slower than the default 8-bit path. 16-bit sources with a non-sRGB color profile may
-  shift slightly in color. There is no RAW decoding and no HDR or wide-gamut pipeline.
+  about 1.75x slower than the default 8-bit path.
+- Wide gamut is opt in too: `--gamut p3` composites in Display P3, `--gamut rec2020` converts that
+  to BT.2020 on export (colors beyond P3 clip). LUT-based ICC profiles on 16-bit sources are read as
+  sRGB. `--hdr pq|hlg` renders HDR video and stills in BT.2020; color filters other than grade clip
+  wide-gamut colors to sRGB in HDR. Camera RAW needs LibRaw's `dcraw_emu` and uses the camera's
+  as-shot white balance with LibRaw's default demosaic; there are no lens corrections.
 - The audio DSP is solid but basic next to dedicated tools. Third-party plugins render offline only (not in
   the studio preview), with automation sampled once per clip. LV2 and LADSPA run through ffmpeg. VST3 and
   CLAP need the bundled host built with CMake, which is tested on Linux only. There is no Audio Unit host

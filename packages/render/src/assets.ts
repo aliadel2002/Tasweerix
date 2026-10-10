@@ -1,3 +1,4 @@
+import type { CanvasGamut } from '@tasweerix/core';
 /** Something drawable with known pixel size. */
 export type Drawable = CanvasImageSource & { width: number; height: number };
 
@@ -11,8 +12,10 @@ export interface AssetProvider {
   /**
    * Decodes a high bit-depth image (16-bit PNG/TIFF, 10-bit video stills) as 16-bit straight RGBA.
    * Resolves undefined when the source is 8-bit or no decoder is available; use `loadImage` then.
+   * `colorSpace` is the space the pixels are in (default sRGB). `format: 'rgba-float16'` means `data`
+   * holds half-float bits in extended sRGB (HDR sources in an HDR render).
    */
-  loadImage16?(src: string): Promise<{ width: number; height: number; data: Uint16Array } | undefined>;
+  loadImage16?(src: string): Promise<{ width: number; height: number; data: Uint16Array; colorSpace?: CanvasGamut; format?: 'rgba64le' | 'rgba-float16' } | undefined>;
   /** Returns an already loaded image. */
   getImage(src: string): Drawable | undefined;
   /** Exact video frame for a source time (seconds). */

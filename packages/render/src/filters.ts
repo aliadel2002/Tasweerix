@@ -300,7 +300,7 @@ void main(){
   vec4 b = texture(uBlur, vUv);
   vec3 diff = o.rgb - b.rgb;
   vec3 m = step(vec3(uThreshold), abs(diff));
-  outColor = vec4(clamp(o.rgb + diff * uAmount * m, 0.0, 1.0), o.a);
+  outColor = vec4(max(o.rgb + diff * uAmount * m, 0.0), o.a);
 }`);
 const unsharp: FilterImpl = {
   apply(input, p, fc) {
@@ -350,7 +350,7 @@ void main(){
   float mn = min(col.r, min(col.g, col.b));
   float sat = mx - mn;
   col = mix(vec3(luma(col)), col, 1.0 + uVibrance * (1.0 - sat));
-  outColor = vec4(clamp(col, 0.0, 1.0), c.a);
+  outColor = vec4(max(col, 0.0), c.a);
 }`,
     (p) => ({
       uExposure: p.exposure ?? 0,
@@ -701,12 +701,26 @@ void main(){ vec4 c = texture(uTex, vUv); vec2 d = (vUv - 0.5) * vec2(uSize.x / 
     (p) => ({ uAmount: p.amount ?? 0.6, uRadius: p.radius ?? 0.5, uSoft: p.softness ?? 0.6, uColor: color4(p.color, '#000') }),
   ),
 );
+// Rolls HDR highlights (above 1.0) off toward white on the brightest channel, keeping hue; same
+// curve as toneMapLinear in @tasweerix/core. `uWhite` maps that working value to output white.
+registerFilter(
+  'toneMap',
+  single(
+    `uniform float uKnee, uWhite;
+vec3 toLin(vec3 v){ return mix(v / 12.92, pow((v + 0.055) / 1.055, vec3(2.4)), step(0.04045, v)); }
+vec3 toEnc(vec3 v){ return mix(v * 12.92, 1.055 * pow(v, vec3(1.0 / 2.4)) - 0.055, step(0.0031308, v)); }
+void main(){ vec4 c = texture(uTex, vUv); vec3 l = toLin(max(c.rgb, 0.0)) / uWhite; float m = max(l.r, max(l.g, l.b));
+  if (m > uKnee) l *= (uKnee + (1.0 - uKnee) * (1.0 - exp(-(m - uKnee) / (1.0 - uKnee)))) / m;
+  outColor = vec4(toEnc(l), c.a); }`,
+    (p) => ({ uKnee: Math.min(0.95, Math.max(0, p.knee ?? 0.6)), uWhite: Math.max(1e-3, p.white ?? 1) }),
+  ),
+);
 registerFilter(
   'grain',
   single(
     `uniform float uAmount, uGrain, uSeed;
 void main(){ vec4 c = texture(uTex, vUv); vec2 p = floor(vUv * uSize / uGrain); float n = hash12(p + uSeed * 17.0) - 0.5;
-  float w = 1.0 - abs(luma(c.rgb) - 0.5) * 1.2; outColor = vec4(clamp(c.rgb + n * uAmount * w, 0.0, 1.0), c.a); }`,
+  float w = 1.0 - abs(luma(c.rgb) - 0.5) * 1.2; outColor = vec4(max(c.rgb + n * uAmount * w, 0.0), c.a); }`,
     (p, fc) => ({ uAmount: p.amount ?? 0.12, uGrain: Math.max(1, (p.size ?? 1.5) * fc.scale), uSeed: (p.seed ?? 0) + (p.animated === false ? 0 : fc.frame.frame) }),
   ),
 );
@@ -869,7 +883,7 @@ registerFilter(
   single(
     `uniform float uAmount, uSeed, uMono;
 void main(){ vec4 c = texture(uTex, vUv); vec2 p = vUv * uSize; vec3 n = uMono > 0.5 ? vec3(hash12(p + uSeed)) : vec3(hash12(p + uSeed), hash12(p + uSeed + 11.0), hash12(p + uSeed + 23.0));
-  outColor = vec4(clamp(c.rgb + (n - 0.5) * uAmount, 0.0, 1.0), c.a); }`,
+  outColor = vec4(max(c.rgb + (n - 0.5) * uAmount, 0.0), c.a); }`,
     (p, fc) => ({ uAmount: p.amount ?? 0.2, uSeed: (p.seed ?? 0) + (p.animated === false ? 0 : fc.frame.frame * 1.37), uMono: p.mono === false ? 0 : 1 }),
   ),
 );

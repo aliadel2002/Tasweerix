@@ -33,6 +33,10 @@ interface InitOptions {
   transparentBackground?: boolean;
   /** 16: composite in float16 and send rgba64le frames (8 bytes per pixel). Default 8. */
   depth?: 8 | 16;
+  /** Compositing color space; frames are sent in it. Default 'srgb'. */
+  gamut?: 'srgb' | 'display-p3';
+  /** Extended range for HDR output: frames are sent as half floats in extended sRGB. */
+  hdr?: boolean;
 }
 
 let comp: Composition;
@@ -40,6 +44,7 @@ let renderer: Renderer;
 let ws: WebSocket;
 let timings: Record<string, number> = {};
 let depth: 8 | 16 = 8;
+let hdr = false;
 
 function pickDefinition(name?: string): CompositionDefinition {
   const mod = entry as Record<string, unknown>;
@@ -56,13 +61,16 @@ function pickDefinition(name?: string): CompositionDefinition {
 
 window.__tx = {
   async init(opts) {
-    depth = opts.depth ?? 8;
-    const assets = new BrowserAssets({ baseUrl: `${location.origin}/project/`, server: location.origin, video: 'server', clientId: opts.client, depth });
+    hdr = !!opts.hdr;
+    depth = hdr ? 16 : (opts.depth ?? 8);
+    // HDR composites in extended sRGB; sources are still decoded in P3 so they keep their gamut.
+    const gamut = hdr ? 'display-p3' : (opts.gamut ?? 'srgb');
+    const assets = new BrowserAssets({ baseUrl: `${location.origin}/project/`, server: location.origin, video: 'server', clientId: opts.client, depth, gamut, hdr });
     setEnv(browserEnv(assets));
     const def = pickDefinition(opts.comp);
     comp = await def.create({ props: opts.props });
     // Half-float GPU intermediates: export runs on software GL, where 'auto' would pick 8-bit and band.
-    renderer = new Renderer({ assets, scale: opts.scale ?? comp.scale, motionBlurSamples: opts.motionBlurSamples, glPrecision: 'half', depth });
+    renderer = new Renderer({ assets, scale: opts.scale ?? comp.scale, motionBlurSamples: opts.motionBlurSamples, glPrecision: 'half', depth, gamut, hdr });
     if (opts.hide) renderer.skipKinds = new Set(opts.hide);
     if (opts.transparentBackground) comp.background = null;
     await renderer.prepare(comp);
@@ -85,16 +93,18 @@ window.__tx = {
       frameCount: comp.frameCount,
       transparent: comp.background === null,
       depth,
+      gamut: renderer.gamut,
+      hdr,
     };
   },
   async frame(n) {
     const t0 = performance.now();
     await renderer.renderFrame(comp, n);
     const t1 = performance.now();
-    const px = depth === 16 ? new Uint8Array(renderer.pixels16().buffer) : renderer.pixels().data;
+    const px = hdr ? new Uint8Array(renderer.pixelsF16().slice().buffer) : depth === 16 ? new Uint8Array(renderer.pixels16().buffer) : renderer.pixels().data;
     const t2 = performance.now();
     timings = { render: t1 - t0, read: t2 - t1 };
-    // Header: frame index (uint32) then pixels (rgba, or rgba64le at depth 16).
+    // Header: frame index (uint32) then pixels (rgba, rgba64le at depth 16, or half-float rgba for HDR).
     const msg = new Uint8Array(4 + px.length);
     new DataView(msg.buffer).setUint32(0, n, true);
     msg.set(px, 4);

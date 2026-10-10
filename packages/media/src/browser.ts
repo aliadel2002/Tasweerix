@@ -1,5 +1,6 @@
-import { hashSeed, type Env, type MediaInfo } from '@tasweerix/core';
-import { float16Surface, type AssetProvider, type Drawable } from '@tasweerix/render';
+import { hashSeed, type CanvasGamut, type Env, type MediaInfo } from '@tasweerix/core';
+import { float16Surface, halfSurface, type AssetProvider, type Drawable } from '@tasweerix/render';
+import { isRawPath } from './formats';
 
 export interface BrowserAssetOptions {
   /** Base URL that relative asset paths are resolved against. */
@@ -19,7 +20,21 @@ export interface BrowserAssetOptions {
    * (for a Renderer with `depth: 16`). Default 8.
    */
   depth?: 8 | 16;
+  /**
+   * Working gamut of the Renderer these assets feed. With 'display-p3' the server converts
+   * wide-gamut video and 16-bit stills into P3 instead of clipping them to sRGB. Default 'srgb'.
+   */
+  gamut?: CanvasGamut;
+  /**
+   * HDR render (Renderer with `hdr`): HDR video and stills (PQ, HLG, OpenEXR, Radiance) arrive as
+   * extended-range half floats instead of being tone mapped. Implies depth 16.
+   */
+  hdr?: boolean;
 }
+
+type Pixels16 = { width: number; height: number; data: Uint16Array; colorSpace: CanvasGamut; format: 'rgba64le' | 'rgba-float16' };
+
+const colorSpaceHeader = (res: Response): CanvasGamut => (res.headers.get('x-color-space') === 'display-p3' ? 'display-p3' : 'srgb');
 
 function joinUrl(base: string, src: string): string {
   if (/^(https?:|data:|blob:)/.test(src)) return src;
@@ -36,6 +51,8 @@ export class BrowserAssets implements AssetProvider {
   videoMode: 'server' | 'element';
   clientId: string;
   readonly depth: 8 | 16;
+  readonly gamut: CanvasGamut;
+  readonly hdr: boolean;
   private images = new Map<string, Drawable>();
   private pendingImages = new Map<string, Promise<Drawable>>();
   private fonts = new Map<string, Promise<string>>();
@@ -47,7 +64,9 @@ export class BrowserAssets implements AssetProvider {
     this.server = opts.server ?? new URL(this.baseUrl).origin;
     this.videoMode = opts.video ?? 'server';
     this.clientId = String(opts.clientId ?? 0);
-    this.depth = opts.depth ?? 8;
+    this.hdr = !!opts.hdr;
+    this.depth = this.hdr ? 16 : (opts.depth ?? 8);
+    this.gamut = opts.gamut ?? 'srgb';
   }
 
   url(src: string): string {
@@ -60,10 +79,11 @@ export class BrowserAssets implements AssetProvider {
     let p = this.pendingImages.get(src);
     if (!p) {
       p = (async () => {
-        if (this.depth === 16) {
+        // Float and HDR stills (OpenEXR, Radiance) and camera RAW need the server at any depth: browsers can't decode them.
+        if (this.depth === 16 || /\.(exr|hdr)$/i.test(src) || isRawPath(src)) {
           const hi = await this.loadImage16(src);
           if (hi) {
-            const s = float16Surface(hi.width, hi.height, hi.data) as Drawable;
+            const s = (hi.format === 'rgba-float16' ? halfSurface(hi.width, hi.height, hi.data) : float16Surface(hi.width, hi.height, hi.data, hi.colorSpace)) as Drawable;
             this.images.set(src, s);
             return s;
           }
@@ -80,24 +100,31 @@ export class BrowserAssets implements AssetProvider {
     return p;
   }
 
-  private images16 = new Map<string, Promise<{ width: number; height: number; data: Uint16Array } | undefined>>();
+  private images16 = new Map<string, Promise<Pixels16 | undefined>>();
 
-  /** 16-bit decode through the Tasweerix server (`/__tx/image16`); undefined for 8-bit sources or without a server. */
-  loadImage16(src: string): Promise<{ width: number; height: number; data: Uint16Array } | undefined> {
+  /**
+   * 16-bit decode through the Tasweerix server (`/__tx/image16`), with the embedded color profile
+   * applied; undefined for 8-bit sources or without a server. HDR sources come back as half floats
+   * (`format: 'rgba-float16'`) for an HDR render, tone mapped to 16 bits otherwise.
+   */
+  loadImage16(src: string): Promise<Pixels16 | undefined> {
     let p = this.images16.get(src);
     if (!p) {
       p = (async () => {
         if (/^(https?:|data:|blob:)/.test(src)) return undefined;
         let res: Response;
         try {
-          res = await fetch(`${this.server}/__tx/image16?${new URLSearchParams({ src })}`);
+          res = await fetch(`${this.server}/__tx/image16?${new URLSearchParams({ src, gamut: this.gamut, ...(this.hdr ? { hdr: '1' } : {}) })}`);
         } catch {
           return undefined;
         }
+        // RAW has no browser fallback, so its decode error (such as LibRaw missing) is the useful one.
+        if (res.status !== 200 && isRawPath(src)) throw new Error(`Failed to decode ${src}: ${await res.text()}`);
         if (res.status !== 200) return undefined;
         const width = Number(res.headers.get('x-width'));
         const height = Number(res.headers.get('x-height'));
-        return { width, height, data: new Uint16Array(await res.arrayBuffer()) };
+        const format = res.headers.get('x-format') === 'rgba-float16' ? 'rgba-float16' : 'rgba64le';
+        return { width, height, data: new Uint16Array(await res.arrayBuffer()), colorSpace: colorSpaceHeader(res), format };
       })();
       this.images16.set(src, p);
     }
@@ -122,13 +149,18 @@ export class BrowserAssets implements AssetProvider {
     if (hint?.width) q.set('w', String(hint.width));
     if (hint?.height) q.set('h', String(hint.height));
     if (this.depth === 16) q.set('depth', '16');
+    if (this.gamut !== 'srgb') q.set('gamut', this.gamut);
+    if (this.hdr) q.set('hdr', '1');
     const res = await fetch(`${this.server}/__tx/frame?${q}`);
     if (!res.ok) throw new Error(`Frame request failed for ${src} @ ${time}: ${res.status} ${await res.text()}`);
     const w = Number(res.headers.get('x-width'));
     const h = Number(res.headers.get('x-height'));
-    if (this.depth === 16) return float16Surface(w, h, new Uint16Array(await res.arrayBuffer())) as Drawable;
+    const colorSpace = colorSpaceHeader(res);
+    const format = res.headers.get('x-format');
+    if (format === 'rgba-float16') return halfSurface(w, h, new Uint16Array(await res.arrayBuffer())) as Drawable;
+    if (format === 'rgba64le' || (!format && this.depth === 16)) return float16Surface(w, h, new Uint16Array(await res.arrayBuffer()), colorSpace) as Drawable;
     const buf = new Uint8ClampedArray(await res.arrayBuffer());
-    return createImageBitmap(new ImageData(buf, w, h));
+    return createImageBitmap(new ImageData(buf, w, h, colorSpace === 'srgb' ? undefined : { colorSpace }));
   }
 
   private async elementFrame(src: string, time: number): Promise<Drawable> {

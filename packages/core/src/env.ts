@@ -12,6 +12,12 @@ export interface MediaInfo {
   rotation?: number;
   /** Bits per color channel of the video/image stream (8 for most JPEG/PNG; 10, 12, 16 or 32 for high bit-depth sources). */
   bitDepth?: number;
+  /** ffmpeg pixel format of the video/image stream (e.g. yuv420p10le, rgb48be, gbrpf32le). */
+  pixFmt?: string;
+  /** Color primaries the stream is tagged with, as ffprobe names them (bt709, bt2020, smpte432...). */
+  colorPrimaries?: string;
+  /** Transfer characteristic tag (bt709, smpte2084, arib-std-b67...). */
+  colorTransfer?: string;
 }
 
 /** Host environment services (browser preview, headless export, Node tooling). */
