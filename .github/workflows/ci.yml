@@ -63,3 +63,7 @@ jobs:
 
       - name: Render examples
         run: pnpm examples
+
+      # Packs every package as `pnpm publish` would and checks the tarballs work outside the monorepo.
+      - name: Check packed packages
+        run: bash scripts/check-packed.sh

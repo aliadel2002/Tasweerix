@@ -17,9 +17,10 @@ Rules:
 - Times are in seconds. Positions are composition pixels unless inside a 3D scene (world units, y up).
 - If the request cannot be done with the documented API, return the file unchanged and explain why in the summary.`;
 
-/** API documentation shipped with the repository (docs/*.md), sent as cached context. */
+/** API documentation (docs/*.md), sent as cached context: the repository's, or the copy shipped in the published package. */
 export function loadReference(): string {
-  const dir = fileURLToPath(new URL('../../../docs/', import.meta.url));
+  const built = /[\\/]dist[\\/][^\\/]*$/.test(fileURLToPath(import.meta.url));
+  const dir = fileURLToPath(new URL(built ? '../docs/' : '../../../docs/', import.meta.url));
   if (!existsSync(dir)) return '';
   return readdirSync(dir)
     .filter((f) => f.endsWith('.md'))

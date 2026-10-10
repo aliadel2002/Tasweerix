@@ -1,4 +1,3 @@
-import { build } from 'esbuild';
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, watch, writeFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -10,6 +9,7 @@ import { render } from './render';
 import { renderAudioForExport } from './audio';
 import { pluginCommands, type CommandContext } from '@tasweerix/core';
 import { setupPlugins } from './plugins';
+import { buildStudioApp } from './studio-app';
 
 export interface StudioOptions {
   root: string;
@@ -49,25 +49,11 @@ async function readBody(req: IncomingMessage): Promise<Buffer> {
 
 const json = (res: ServerResponse, code: number, body: unknown) => res.writeHead(code, { 'content-type': 'application/json' }).end(JSON.stringify(body));
 
-/** Bundles the studio UI (Preact app) with esbuild. */
-async function buildStudioApp(): Promise<{ js: string; css: string }> {
-  const result = await build({
-    entryPoints: [join(STUDIO_APP, 'src/main.tsx')],
-    bundle: true,
-    write: false,
-    format: 'esm',
-    platform: 'browser',
-    target: 'chrome110',
-    jsx: 'automatic',
-    jsxImportSource: 'preact',
-    minify: true,
-    outdir: '/out',
-    logLevel: 'silent',
-    nodePaths: [join(STUDIO_APP, 'node_modules')],
-  });
-  const js = result.outputFiles.find((f) => f.path.endsWith('.js'))!.text;
-  const css = result.outputFiles.find((f) => f.path.endsWith('.css'))?.text ?? '';
-  return { js, css };
+/** The studio UI: built from apps/studio in a checkout, prebuilt into dist/studio in the published package. */
+async function loadStudioApp(): Promise<{ js: string; css: string }> {
+  if (existsSync(STUDIO_APP)) return buildStudioApp(STUDIO_APP);
+  const dir = join(CLI_ROOT, 'dist/studio');
+  return { js: readFileSync(join(dir, 'studio.js'), 'utf8'), css: readFileSync(join(dir, 'studio.css'), 'utf8') };
 }
 
 /**
@@ -80,7 +66,7 @@ export async function startStudio(opts: StudioOptions): Promise<{ url: string; c
   let entryRel = opts.entry ? relative(root, resolve(root, opts.entry)) : findEntry(root);
   // Built-in and tasweerix.config.ts plugins: host analyses for previews and studio commands.
   await setupPlugins(root);
-  const app = await buildStudioApp();
+  const app = await loadStudioApp();
   const media = createMediaHandler({ root });
 
   // ---- preview bundle state

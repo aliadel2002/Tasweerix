@@ -32,5 +32,22 @@
   },
   "devDependencies": {
     "@types/ws": "^8.5.13"
+  },
+  "files": [
+    "dist",
+    "src/runtime"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "bin": {
+      "tasweerix": "./dist/main.js"
+    },
+    "exports": {
+      "./package.json": "./package.json"
+    }
+  },
+  "scripts": {
+    "build": "tsup",
+    "prepublishOnly": "pnpm run build"
   }
 }
