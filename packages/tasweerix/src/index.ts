@@ -10,3 +10,4 @@ export { photo, op, mask, PhotoNode, applyOps, histogram, type PhotoOp, type Mas
 export { kashida, kashidaText, arabicDigits, stripDiacritics, loadFont, registerFont, TypeFont } from '@tasweerix/type';
 export { motion, textFx, enterFx, exitFx, loopFx, morph, morphPaths, particles, particlePresets, repeat, followPath, barChart, lineChart, pieChart, numberCounter, progressBar, lowerThird, titleCard, callout, spectrumBars, scramble, counter, ParticleNode, type ParticleConfig } from '@tasweerix/motion';
 export { pen, Pen, boolean, offsetPath, strokeToPath, simplifyPath, smoothPath, poissonDisc, delaunay, voronoi, flowField, lSystem, blob, ridgeLines, spirograph, patterns, importSVG, svgFile, toSVG, transformPath, translatePath, scalePath, rotatePath, centerPath } from '@tasweerix/illustrate';
+export { smart, type Cut } from '@tasweerix/smart';

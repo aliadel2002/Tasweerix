@@ -124,6 +124,29 @@ export function registerCommands(program: Command): void {
     });
 
   program
+    .command('cuts')
+    .description('Suggest an edit for a media file and print it as code: silence jump-cuts, shots, or beats')
+    .argument('<file>', 'media file (relative to --root)')
+    .option('--mode <mode>', 'silence | shots | beats', 'silence')
+    .option('--threshold <n>', 'silence dBFS or scene score', Number)
+    .option('--min-silence <s>', 'minimum silence to cut', Number)
+    .option('--padding <s>', 'audio kept around speech', Number)
+    .option('--root <dir>', 'project root', '.')
+    .option('--json', 'print JSON instead of code')
+    .action(async (file: string, o) => {
+      const { nodeEnv } = await import('@tasweerix/media/node');
+      const { smart } = await import('@tasweerix/smart');
+      const env = nodeEnv(resolve(o.root));
+      if (o.mode === 'beats') {
+        const b = await smart.beats(file, env);
+        console.log(o.json ? JSON.stringify(b, null, 2) : `// ${b.bpm.toFixed(1)} BPM\nconst beats = [${b.beats.map((x) => x.toFixed(3)).join(', ')}];`);
+        return;
+      }
+      const cuts = o.mode === 'shots' ? await smart.shots(file, { threshold: o.threshold }, env) : await smart.silenceCuts(file, { threshold: o.threshold, minSilence: o.minSilence, padding: o.padding }, env);
+      console.log(o.json ? JSON.stringify(cuts, null, 2) : smart.cutsToCode(file, cuts));
+    });
+
+  program
     .command('inspect')
     .description('Print the composition tree as JSON (timing, props, audio)')
     .argument('<entry>')

@@ -23,7 +23,8 @@
     "ws": "^8.18.0",
     "@tasweerix/audio": "workspace:*",
     "@tasweerix/illustrate": "workspace:*",
-    "@tasweerix/type": "workspace:*"
+    "@tasweerix/type": "workspace:*",
+    "@tasweerix/smart": "workspace:*"
   },
   "devDependencies": {
     "@types/ws": "^8.5.13"

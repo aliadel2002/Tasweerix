@@ -1,7 +1,7 @@
 import { AudioClip, type AudioEffectSpec, type BusSpec } from './audio';
 import type { Animatable } from './animatable';
 import { makeContext, type FrameContext } from './context';
-import { getEnv, type Env, type Preparable } from './env';
+import { getEnv, setEnv, type Env, type Preparable } from './env';
 import { GroupNode, VideoNode } from './nodes';
 import { SceneNode, type NodeOptions } from './node';
 import type { Paint } from './paint';
@@ -231,14 +231,19 @@ function define<P extends Record<string, unknown>>(
     async create(opts = {}) {
       const c = new Composition(kind, options);
       Object.assign(c.props, opts.props ?? {});
+      const env = opts.env ?? getEnv();
       const prev = building;
+      const prevEnv = getEnv();
       building = c;
+      // Expose the env to code running inside the build (smart analysis, file loading …).
+      setEnv(env);
       try {
         await withFps(c.fps, () => build(c, c.props as P));
+        await c.prepare(env);
       } finally {
         building = prev;
+        setEnv(prevEnv);
       }
-      await c.prepare(opts.env ?? getEnv());
       return c;
     },
   };

@@ -3,6 +3,8 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { extname, isAbsolute, normalize, resolve, sep } from 'node:path';
 import { decodePcm, interleave, probe } from './ffmpeg';
 import { FrameServer } from './frames';
+import { AnalysisCache, hostAnalyze } from './analysis';
+import { join } from 'node:path';
 
 export const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -62,10 +64,34 @@ export interface MediaHandlerOptions {
  */
 export function createMediaHandler(opts: MediaHandlerOptions) {
   const frames = opts.frames ?? new FrameServer();
+  const cache = new AnalysisCache(join(opts.root, '.tasweerix', 'cache'));
   const handler = async (req: IncomingMessage, res: ServerResponse): Promise<boolean> => {
     const url = new URL(req.url ?? '/', 'http://x');
     if (!url.pathname.startsWith('/__tx/')) return false;
     try {
+      if (url.pathname === '/__tx/cache') {
+        const key = url.searchParams.get('key') ?? '';
+        const srcParam = url.searchParams.get('src');
+        const srcFile = srcParam ? resolveAsset(opts.root, srcParam) : undefined;
+        if (req.method === 'PUT') {
+          const chunks: Buffer[] = [];
+          for await (const c of req) chunks.push(c as Buffer);
+          cache.set(key, JSON.parse(Buffer.concat(chunks).toString() || 'null'), srcFile);
+          res.writeHead(204).end();
+        } else {
+          const v = cache.get(key, srcFile);
+          if (v === undefined) res.writeHead(404).end();
+          else res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(v));
+        }
+        return true;
+      }
+      if (url.pathname === '/__tx/analyze') {
+        const kind = url.searchParams.get('kind') ?? '';
+        const params = JSON.parse(url.searchParams.get('params') ?? '{}') as Record<string, unknown>;
+        const result = await hostAnalyze(kind, resolveAsset(opts.root, url.searchParams.get('src') ?? ''), params);
+        res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(result));
+        return true;
+      }
       const src = url.searchParams.get('src') ?? '';
       const file = resolveAsset(opts.root, src);
       if (url.pathname === '/__tx/probe') {

@@ -103,8 +103,10 @@ function effectTail(effects: AudioEffectSpec[], sampleRate: number, ctx: FrameCo
 }
 
 /** Produces the clip's source signal (after trim/speed/pitch/reverse/loop) for its full duration. */
-async function clipSource(clip: AudioClip, sr: number, channels: number, load: PcmLoader): Promise<AudioData> {
-  const dur = clip.effectiveDuration();
+async function clipSource(clip: AudioClip, sr: number, channels: number, load: PcmLoader, compDuration: number): Promise<AudioData> {
+  let dur = clip.effectiveDuration();
+  // Open-ended loops fill the rest of the composition.
+  if (!Number.isFinite(dur) && clip.loop) dur = Math.max(0, compDuration - clip.start);
   if (clip.generator) {
     const gen = getGenerator(clip.generator.kind);
     if (!gen) throw new Error(`Unknown audio generator "${clip.generator.kind}"`);
@@ -170,7 +172,7 @@ export async function renderMix(comp: Composition, opts: MixOptions): Promise<Mi
     const clipStart = clip.start;
     if (clipStart >= winStart + winDur) continue;
     if (Number.isFinite(dur) && clipStart + dur + 30 < winStart) continue;
-    const src = await clipSource(clip, sr, nch, opts.load);
+    const src = await clipSource(clip, sr, nch, opts.load, comp.duration);
     const clipDur = src.channels[0]!.length / sr;
     const tail = effectTail(clip.effects.filter((e) => e.kind !== 'duck'), sr, base);
     const len = Math.round((clipDur + tail) * sr);

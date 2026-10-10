@@ -20,6 +20,13 @@ export interface Env {
   loadPcm?(src: string, sampleRate: number, channels: number): Promise<Float32Array[]>;
   /** Raw file bytes (fonts, impulse responses, LUTs …). */
   loadBinary?(src: string): Promise<ArrayBuffer>;
+  /** Persistent analysis cache (invalidated when `src` changes on disk). */
+  cache?: {
+    get<T>(key: string, src?: string): Promise<T | undefined>;
+    set(key: string, value: unknown, src?: string): Promise<void>;
+  };
+  /** Heavy media analysis performed by the host (e.g. ffmpeg scene detection). */
+  analyze?(kind: string, src: string, params: Record<string, unknown>): Promise<unknown>;
 }
 
 /** Anything that needs async loading before rendering (audio analysis, fonts, data files). */

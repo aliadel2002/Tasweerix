@@ -1,0 +1,19 @@
+{
+  "name": "@tasweerix/smart",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Tasweerix smart editing: silence cuts, beat sync, scene detection, auto-ducking and loudness matching \u2014 results are plain, editable cut lists.",
+  "license": "MIT",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@tasweerix/core": "workspace:*",
+    "@tasweerix/audio": "workspace:*"
+  },
+  "devDependencies": {
+    "@tasweerix/media": "workspace:*"
+  }
+}

@@ -42,6 +42,12 @@ importers:
         specifier: workspace:*
         version: link:../../packages/tasweerix
 
+  examples/smart-edit:
+    dependencies:
+      tasweerix:
+        specifier: workspace:*
+        version: link:../../packages/tasweerix
+
   examples/smoke:
     dependencies:
       tasweerix:
@@ -71,6 +77,9 @@ importers:
       '@tasweerix/render':
         specifier: workspace:*
         version: link:../render
+      '@tasweerix/smart':
+        specifier: workspace:*
+        version: link:../smart
       '@tasweerix/type':
         specifier: workspace:*
         version: link:../type
@@ -141,6 +150,19 @@ importers:
         specifier: workspace:*
         version: link:../core
 
+  packages/smart:
+    dependencies:
+      '@tasweerix/audio':
+        specifier: workspace:*
+        version: link:../audio
+      '@tasweerix/core':
+        specifier: workspace:*
+        version: link:../core
+    devDependencies:
+      '@tasweerix/media':
+        specifier: workspace:*
+        version: link:../media
+
   packages/tasweerix:
     dependencies:
       '@tasweerix/audio':
@@ -164,6 +186,9 @@ importers:
       '@tasweerix/render':
         specifier: workspace:*
         version: link:../render
+      '@tasweerix/smart':
+        specifier: workspace:*
+        version: link:../smart
       '@tasweerix/type':
         specifier: workspace:*
         version: link:../type

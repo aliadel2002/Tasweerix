@@ -68,8 +68,8 @@ export class Track<T> {
     return this;
   }
 
-  /** Appends a key relative to the last key: `.then('0.5s', 100, 'outCubic')`. */
-  then(after: TimeInput, v: T, e?: EasingInput): this {
+  /** Appends a key relative to the last key: `.after('0.5s', 100, 'outCubic')`. (Not named `then`: tracks must never be thenables.) */
+  after(after: TimeInput, v: T, e?: EasingInput): this {
     const last = this.keys[this.keys.length - 1];
     return this.add([(last?.t ?? 0) + toSeconds(after), v, e as EasingInput]);
   }

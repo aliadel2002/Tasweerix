@@ -181,6 +181,20 @@ export function browserEnv(assets: BrowserAssets): Env {
   const cache = new Map<string, Promise<MediaInfo>>();
   return {
     kind: 'browser',
+    cache: {
+      async get<T>(key: string, src?: string) {
+        const r = await fetch(`${assets.server}/__tx/cache?${new URLSearchParams({ key, ...(src ? { src } : {}) })}`).catch(() => undefined);
+        return r?.ok ? ((await r.json()) as T) : undefined;
+      },
+      async set(key, value, src) {
+        await fetch(`${assets.server}/__tx/cache?${new URLSearchParams({ key, ...(src ? { src } : {}) })}`, { method: 'PUT', body: JSON.stringify(value) }).catch(() => undefined);
+      },
+    },
+    async analyze(kind, src, params) {
+      const r = await fetch(`${assets.server}/__tx/analyze?${new URLSearchParams({ kind, src, params: JSON.stringify(params) })}`);
+      if (!r.ok) throw new Error(`analysis ${kind} failed: ${await r.text()}`);
+      return r.json();
+    },
     loadPcm: async (src, rate, ch) => (await assets.loadPcm(src, rate, ch)).data,
     loadBinary: (src) => assets.loadBinary(src),
     probe(src) {
