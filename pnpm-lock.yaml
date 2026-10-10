@@ -137,6 +137,9 @@ importers:
       '@tasweerix/type':
         specifier: workspace:*
         version: link:../type
+      '@tasweerix/vision':
+        specifier: workspace:*
+        version: link:../vision
       commander:
         specifier: ^12.1.0
         version: 12.1.0
@@ -274,6 +277,9 @@ importers:
       '@tasweerix/type':
         specifier: workspace:*
         version: link:../type
+      '@tasweerix/vision':
+        specifier: workspace:*
+        version: link:../vision
 
   packages/type:
     dependencies:
@@ -289,6 +295,15 @@ importers:
       harfbuzzjs:
         specifier: ^0.4.0
         version: 0.4.15
+
+  packages/vision:
+    dependencies:
+      '@tasweerix/core':
+        specifier: workspace:*
+        version: link:../core
+      '@tasweerix/media':
+        specifier: workspace:*
+        version: link:../media
 
 packages:
 

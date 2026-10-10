@@ -161,7 +161,7 @@ registerDrawer('group', (d) => {
 
 // ------------------------------------------------------------ media
 
-export function drawMedia(d: DrawContext, img: CanvasImageSource & { width: number; height: number }, natW: number, natH: number) {
+export function drawMedia(d: DrawContext, img: CanvasImageSource & { width: number; height: number }, natW: number, natH: number, xf?: [number, number, number, number] | null) {
   const crop = d.props.crop as Rect | null;
   const sx = crop?.x ?? 0;
   const sy = crop?.y ?? 0;
@@ -174,14 +174,24 @@ export function drawMedia(d: DrawContext, img: CanvasImageSource & { width: numb
   // Source rect is expressed in natural pixels; the served frame may be scaled.
   const kx = img.width / natW;
   const ky = img.height / natH;
-  if (d.props.fit === 'cover') {
+  const clip = d.props.fit === 'cover' || !!xf;
+  if (clip) {
     d.ctx.save();
     d.ctx.beginPath();
-    d.ctx.rect(-size[0] / 2, -size[1] / 2, size[0], size[1]);
+    // A media transform stays inside the picture's own rectangle (or the box when covering it).
+    if (d.props.fit === 'cover') d.ctx.rect(-size[0] / 2, -size[1] / 2, size[0], size[1]);
+    else d.ctx.rect(-size[0] / 2 + fit.x, -size[1] / 2 + fit.y, fit.width, fit.height);
     d.ctx.clip();
   }
+  if (xf) {
+    const cx = -size[0] / 2 + fit.x + fit.width / 2;
+    const cy = -size[1] / 2 + fit.y + fit.height / 2;
+    d.ctx.translate(cx, cy);
+    d.ctx.transform(xf[0], xf[1], -xf[1], xf[0], xf[2] * fit.width, xf[3] * fit.width);
+    d.ctx.translate(-cx, -cy);
+  }
   d.ctx.drawImage(img, sx * kx, sy * ky, sw * kx, sh * ky, -size[0] / 2 + fit.x, -size[1] / 2 + fit.y, fit.width, fit.height);
-  if (d.props.fit === 'cover') d.ctx.restore();
+  if (clip) d.ctx.restore();
 }
 
 registerDrawer('image', (d) => {
@@ -197,7 +207,7 @@ registerDrawer(
     const t = n.sourceTime(d.frame);
     const img = d.renderer.videoFrames.get(Renderer.frameKey(n.src, t));
     if (!img) return;
-    drawMedia(d, img, n.info?.width ?? img.width, n.info?.height ?? img.height);
+    drawMedia(d, img, n.info?.width ?? img.width, n.info?.height ?? img.height, n.mediaTransform?.(t));
   },
   {
     async collect(node, local, renderer) {

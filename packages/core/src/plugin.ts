@@ -25,6 +25,20 @@ export interface CommandContext {
   writeFile(path: string, content: string): Promise<void>;
   /** The entry file of the current project, when known. */
   entry?: string;
+  /** Renders a composition entry to a file with the host's export pipeline. */
+  render(o: CommandRenderOptions): Promise<{ output: string; seconds: number }>;
+}
+
+export interface CommandRenderOptions {
+  entry: string;
+  output: string;
+  /** Asset root (default: the entry's folder). */
+  root?: string;
+  codec?: string;
+  scale?: number;
+  concurrency?: number;
+  props?: Record<string, unknown>;
+  onProgress?(p: { done: number; total: number }): void;
 }
 
 /** A CLI subcommand and, optionally, a studio action contributed by a plugin. */

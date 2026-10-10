@@ -7,8 +7,8 @@ import { importForNode } from './bundle';
 
 /** Plugins that ship with the CLI. Their commands use the same hook as third-party plugins. */
 export async function builtinPlugins(): Promise<Plugin[]> {
-  const [{ interchangePlugin }] = await Promise.all([import('@tasweerix/interchange/node')]);
-  return [interchangePlugin];
+  const [{ interchangePlugin }, { visionPlugin }] = await Promise.all([import('@tasweerix/interchange/node'), import('@tasweerix/vision/node')]);
+  return [interchangePlugin, visionPlugin];
 }
 
 const CONFIG_FILES = ['tasweerix.config.ts', 'tasweerix.config.mts', 'tasweerix.config.js', 'tasweerix.config.mjs'];
@@ -58,6 +58,12 @@ export function cliContext(args: string[], options: Record<string, any>, cwd = p
     async writeFile(p, content) {
       await mkdir(dirname(resolve(cwd, p)), { recursive: true });
       await writeFile(resolve(cwd, p), content);
+    },
+    async render(o) {
+      const { render } = await import('./render');
+      const { renderAudioForExport } = await import('./audio');
+      const r = await render({ entry: resolve(cwd, o.entry), output: resolve(cwd, o.output), root: o.root ? resolve(cwd, o.root) : undefined, codec: o.codec as never, scale: o.scale, concurrency: o.concurrency ?? 2, props: o.props, renderAudio: renderAudioForExport, onProgress: o.onProgress });
+      return { output: r.output, seconds: r.seconds };
     },
   };
 }

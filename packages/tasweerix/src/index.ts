@@ -11,3 +11,4 @@ export { kashida, kashidaText, arabicDigits, stripDiacritics, loadFont, register
 export { motion, textFx, enterFx, exitFx, loopFx, morph, morphPaths, particles, particlePresets, repeat, followPath, barChart, lineChart, pieChart, numberCounter, progressBar, lowerThird, titleCard, callout, spectrumBars, scramble, counter, ParticleNode, type ParticleConfig } from '@tasweerix/motion';
 export { pen, Pen, boolean, offsetPath, strokeToPath, simplifyPath, smoothPath, poissonDisc, delaunay, voronoi, flowField, lSystem, blob, ridgeLines, spirograph, patterns, importSVG, svgFile, toSVG, transformPath, translatePath, scalePath, rotatePath, centerPath } from '@tasweerix/illustrate';
 export { smart, type Cut } from '@tasweerix/smart';
+export { vision, stabilize, applyStabilization, analyzeMotion, trackPoint, follow, trackToKeys, type PointTrack, type StabilizeOptions, type StabilizeData, type MotionData } from '@tasweerix/vision';

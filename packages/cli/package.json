@@ -26,7 +26,8 @@
     "@tasweerix/type": "workspace:*",
     "@tasweerix/smart": "workspace:*",
     "@tasweerix/codemod": "workspace:*",
-    "@tasweerix/interchange": "workspace:*"
+    "@tasweerix/interchange": "workspace:*",
+    "@tasweerix/vision": "workspace:*"
   },
   "devDependencies": {
     "@types/ws": "^8.5.13"
