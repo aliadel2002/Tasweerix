@@ -180,8 +180,9 @@ the Messages API, and drive the studio with Playwright. No test needs network ac
 
 ## Limitations
 
-- Exports run headless Chromium and FFmpeg on the CPU. Without a GPU, WebGL runs in software
-  (SwiftShader), which works but makes heavy filter stacks slow at high resolutions.
+- Exports use a GPU for WebGL when one is present. Without one, WebGL runs in software (SwiftShader):
+  filter passes are fused and workers run in parallel, but heavy filter stacks at high resolutions
+  stay slow on CPU-only machines.
 - Studio preview playback of heavy compositions may run below real time. Exports are always exact.
 - Photos are processed at 8 bits per channel for display. There is no RAW decoding and no HDR or
   wide-gamut pipeline.
