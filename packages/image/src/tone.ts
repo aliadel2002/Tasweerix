@@ -54,7 +54,7 @@ export function autoLevels(b: Bitmap, opts: { clip?: number; perChannel?: boolea
     (r - lo[0]!) / Math.max(1e-3, hi[0]! - lo[0]!),
     (g - lo[1]!) / Math.max(1e-3, hi[1]! - lo[1]!),
     (bl - lo[2]!) / Math.max(1e-3, hi[2]! - lo[2]!),
-  ].map((v) => Math.min(1, Math.max(0, v))) as [number, number, number]);
+  ].map((v) => Math.max(0, v)) as [number, number, number]);
 }
 
 /** Auto white balance: gray-world (default) or white-patch (brightest pixels become neutral). */
@@ -84,7 +84,7 @@ export function autoWhiteBalance(b: Bitmap, method: 'gray-world' | 'white-patch'
   if (!n) return cloneBitmap(b);
   const avg = (sr + sg + sb) / (3 * n);
   const k = [avg / (sr / n), avg / (sg / n), avg / (sb / n)].map((x) => 1 + (x - 1) * strength);
-  return mapPixels(b, (r, g, bl) => [Math.min(1, r * k[0]!), Math.min(1, g * k[1]!), Math.min(1, bl * k[2]!)]);
+  return mapPixels(b, (r, g, bl) => [r * k[0]!, g * k[1]!, bl * k[2]!]);
 }
 
 export interface AdjustParams {
@@ -121,7 +121,7 @@ export function adjust(b: Bitmap, p: AdjustParams, mask?: Mask): Bitmap {
       c = c.map((v) => (v - 0.435) * (1 + (p.contrast ?? 0)) + 0.435);
       if (p.gamma) c = c.map((v) => Math.pow(Math.max(v, 0), 1 / p.gamma!));
       if (p.hue) {
-        const [h, s, v] = rgbToHsv(clamp(c[0]!), clamp(c[1]!), clamp(c[2]!));
+        const [h, s, v] = rgbToHsv(floor0(c[0]!), floor0(c[1]!), floor0(c[2]!));
         c = hsvToRgb(h + p.hue, s, v);
       }
       const g2 = luma(c[0]!, c[1]!, c[2]!);
@@ -131,7 +131,7 @@ export function adjust(b: Bitmap, p: AdjustParams, mask?: Mask): Bitmap {
         const g3 = luma(c[0]!, c[1]!, c[2]!);
         c = c.map((v) => g3 + (v - g3) * (1 + p.vibrance! * (1 - sat)));
       }
-      return c.map(clamp) as [number, number, number];
+      return c.map(floor0) as [number, number, number];
     },
     mask,
   );
@@ -139,9 +139,11 @@ export function adjust(b: Bitmap, p: AdjustParams, mask?: Mask): Bitmap {
 
 export function curves(b: Bitmap, p: { rgb?: [number, number][]; r?: [number, number][]; g?: [number, number][]; b?: [number, number][] }, mask?: Mask): Bitmap {
   const [all, cr, cg, cb] = [p.rgb, p.r, p.g, p.b].map((x) => curveTable(x));
-  // Linear interpolation between table entries, so the output is not limited to 256 levels.
+  // Linear interpolation between table entries, so the output is not limited to 256 levels. Values
+  // above 1 continue along the curve's end slope, so headroom survives (an identity curve keeps them).
   const lut = (t: Float32Array, v: number) => {
-    const f = Math.min(1, Math.max(0, v)) * 255;
+    if (v > 1) return t[255]! + (v - 1) * (t[255]! - t[254]!) * 255;
+    const f = Math.max(0, v) * 255;
     const i = Math.min(254, Math.floor(f));
     return t[i]! + (t[i + 1]! - t[i]!) * (f - i);
   };
@@ -171,6 +173,8 @@ export function hsl(b: Bitmap, p: { hue?: number; saturation?: number; lightness
 }
 
 const clamp = (v: number) => Math.min(1, Math.max(0, v));
+/** Ops keep values above 1 (headroom for later recovery); only the 8-bit output edge clips them. */
+const floor0 = (v: number) => Math.max(0, v);
 function smooth(e0: number, e1: number, x: number): number {
   const t = clamp((x - e0) / (e1 - e0));
   return t * t * (3 - 2 * t);
