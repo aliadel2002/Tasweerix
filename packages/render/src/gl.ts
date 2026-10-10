@@ -6,6 +6,8 @@ export interface Tex {
   fbo: WebGLFramebuffer;
   width: number;
   height: number;
+  /** Read-only upload (no framebuffer): deleted on release instead of returning to the pool. */
+  transient?: boolean;
 }
 
 export type UniformValue = number | boolean | number[] | Float32Array | Tex | WebGLTexture3D;
@@ -158,6 +160,10 @@ export class GLPipeline {
   release(t: Tex | undefined | null): void {
     if (!t || !this.inUse.has(t)) return;
     this.inUse.delete(t);
+    if (t.transient) {
+      this.gl.deleteTexture(t.tex);
+      return;
+    }
     this.pool.push(t);
     if (this.pool.length > 24) {
       const old = this.pool.shift()!;
@@ -179,20 +185,21 @@ export class GLPipeline {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
   }
 
-  /** Uploads a canvas / image / bitmap into a new render target. */
+  /**
+   * Uploads a canvas / image / bitmap as an RGBA8 texture for filters to read. 8-bit sources lose
+   * nothing at RGBA8, so this skips the copy into a pooled float target (one full-frame pass fewer,
+   * which matters on software GL). The result has no framebuffer: read it, don't render into it.
+   */
   upload(src: TexImageSource, width?: number, height?: number): Tex {
     const gl = this.gl;
     const w = width ?? (src as { width: number }).width;
     const h = height ?? (src as { height: number }).height;
-    const t = this.target(w, h);
-    gl.bindTexture(gl.TEXTURE_2D, t.tex);
-    // Re-specify as RGBA8 from the source, then copy into the float target via a pass.
-    const tmp = gl.createTexture()!;
-    gl.bindTexture(gl.TEXTURE_2D, tmp);
+    const tex = gl.createTexture()!;
+    gl.bindTexture(gl.TEXTURE_2D, tex);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, src);
     this.texParams();
-    this.run(COPY_FRAG, { uTex: { tex: tmp, fbo: null as unknown as WebGLFramebuffer, width: w, height: h } }, t);
-    gl.deleteTexture(tmp);
+    const t: Tex = { tex, fbo: null as unknown as WebGLFramebuffer, width: w, height: h, transient: true };
+    this.inUse.add(t);
     return t;
   }
 
@@ -288,6 +295,19 @@ export class GLPipeline {
   /** Presents a texture and returns a drawable snapshot (ImageBitmap when supported). Close it after use. */
   output(t: Tex): CanvasImageSource & { close?: () => void } {
     this.present(t);
+    return this.snapshot();
+  }
+
+  /**
+   * Runs a pass straight into the GL canvas and returns a drawable snapshot, like `output(run(...))`
+   * without the intermediate target and the copy `present` makes. Close it after use.
+   */
+  outputPass(frag: string, uniforms: Record<string, UniformValue>): CanvasImageSource & { close?: () => void } {
+    this.run(frag, uniforms, null, true);
+    return this.snapshot();
+  }
+
+  private snapshot(): CanvasImageSource & { close?: () => void } {
     const c = this.canvas as OffscreenCanvas;
     if (typeof c.transferToImageBitmap === 'function') return c.transferToImageBitmap();
     return this.canvas;

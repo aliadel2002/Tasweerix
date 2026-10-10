@@ -5,8 +5,9 @@
 1. esbuild bundles your entry with a small render runtime.
 2. A local server serves the bundle, your assets and the `/__tx` media API. That API covers ffprobe,
    frame-exact FFmpeg decoding with sequential stream reuse, PCM decoding and analysis caching.
-3. Headless Chromium workers (`-j N`) each render a frame range with the same renderer as the studio.
-   They stream raw RGBA over a WebSocket into FFmpeg.
+3. Headless Chromium workers (`-j N`, default one per CPU core up to 4) each render a frame range with
+   the same renderer as the studio, each in its own browser. They stream raw RGBA over a WebSocket into
+   FFmpeg.
 4. The audio mix is rendered in Node by the same TypeScript engine, then segments are joined and muxed.
 
 ```sh
@@ -20,6 +21,19 @@ tasweerix render index.ts -o out/clip.mp4 --range 0-120 --props '{"title":"Hi"}'
 
 `--scale` sets the output resolution multiplier, `--crf`/`--preset` control quality, and
 `--motion-blur-samples` sets the sub-frame samples for nodes with `motionBlur`.
+
+### GPU and speed
+
+Export uses a hardware GPU for WebGL when one answers (`--gpu auto`, the default). It tries ANGLE on
+Vulkan, then EGL, on Linux, Metal on macOS and D3D11 on Windows, and logs which renderer it got.
+`--gpu off` forces software rendering, `--gpu on` tries the GPU even where no device node is visible,
+and `TASWEERIX_GPU` sets the default.
+
+Without a GPU, Chromium renders WebGL with SwiftShader on the CPU. That is correct but slow, and every
+full-frame shader pass costs time. The renderer keeps passes down: consecutive per-pixel filters (grade,
+levels, curves, HSL, LUT, vignette and the like) run as one pass, and the last filter of a layer,
+transitions and luma masks draw straight into the output. On CPU-only machines, more workers (`-j`)
+help up to the core count, and a faster x264 preset (`--preset veryfast`) frees CPU for rendering.
 
 ## Interchange
 
