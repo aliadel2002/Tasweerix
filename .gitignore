@@ -10,3 +10,4 @@ __screenshots__/actual/
 .tasweerix-test/
 packages/*/test/.tmp/
 packages/*/test/.tmp-*/
+native/plugin-host/build/
