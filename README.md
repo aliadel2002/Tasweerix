@@ -192,7 +192,8 @@ the Messages API, and drive the studio with Playwright. No test needs network ac
 - Two-way editing only rewrites values written as literals. Computed values are flagged in the
   inspector and must be edited in code.
 - 3D renders through WebGL2. Up to 4 directional and 4 point lights cast shadows, glTF skins use up
-  to 8 influences per vertex and deform on the CPU, and reflections show the environment map, not
+  to 8 influences per vertex and deform on the CPU, only base color textures are imported from glTF
+  files (normal, metallic-roughness and occlusion maps are not), and reflections show the environment map, not
   other objects in the scene. Without a GPU, large shadow maps and many shadow-casting lights are slow.
 - Stabilization corrects translation, rotation and zoom, perspective (keystone) changes with
   `model: 'perspective'`, and rolling-shutter skew and wobble with `rollingShutter`. Vibration faster
