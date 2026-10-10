@@ -16,15 +16,72 @@ export interface ModelMaterial {
 export interface ModelPart {
   geometry: Geometry;
   material: ModelMaterial;
-  /** Transform of the part inside the model. */
+  /** Transform of the part inside the model (rest pose). */
   matrix: Mat4;
   name?: string;
+  /** Index of the node holding the part (models with a node hierarchy). */
+  node?: number;
+  /** Skeleton: index into `Model.skins`, with 4 joint indices and weights per vertex. */
+  skin?: number;
+  /** Joint influences per vertex in `joints`/`weights` (4 or 8). */
+  influences?: number;
+  joints?: Uint32Array;
+  weights?: Float32Array;
+  /** Morph targets: position (and normal) deltas, default weights and target names. */
+  morph?: MorphTargets;
 }
+
+export interface MorphTargets {
+  positions: Float32Array[];
+  normals: (Float32Array | undefined)[];
+  weights: number[];
+  names: string[];
+}
+
+/** A node of a model's hierarchy (rest pose as translation, rotation quaternion and scale). */
+export interface ModelNodeData {
+  name?: string;
+  translation: Vec3;
+  rotation: Quat;
+  scale: Vec3;
+  /** Fixed local matrix (nodes given as a matrix, which glTF forbids animating). */
+  matrix?: Mat4;
+  children: number[];
+  /** Default morph weights of the node's mesh. */
+  weights?: number[];
+}
+
+export interface ModelSkin {
+  joints: number[];
+  inverseBind: Mat4[];
+}
+
+export interface AnimationChannel {
+  node: number;
+  path: 'translation' | 'rotation' | 'scale' | 'weights';
+  interpolation: 'LINEAR' | 'STEP' | 'CUBICSPLINE';
+  times: Float32Array;
+  values: Float32Array;
+}
+
+export interface ModelAnimation {
+  name: string;
+  /** Seconds. */
+  duration: number;
+  channels: AnimationChannel[];
+}
+
+export type Quat = [number, number, number, number];
 
 export interface Model {
   parts: ModelPart[];
-  /** Notes about skipped features (skinning, morph targets …). */
+  /** Notes about skipped features (non-triangle primitives, undecodable textures …). */
   warnings: string[];
+  /** Node hierarchy, skeletons and animation clips (glTF). */
+  nodes?: ModelNodeData[];
+  roots?: number[];
+  skins?: ModelSkin[];
+  animations?: ModelAnimation[];
 }
 
 type Loader = (src: string, load: (path: string) => Promise<ArrayBuffer>) => Promise<Model>;
@@ -130,8 +187,8 @@ async function decodeImage(bytes: Uint8Array, mime: string): Promise<(CanvasImag
 
 /**
  * glTF 2.0 (.gltf with embedded or external buffers, and binary .glb): mesh primitives (triangles),
- * the node hierarchy, PBR metallic-roughness factors, base color textures and emissive color.
- * Skinning, morph targets and animations are not imported.
+ * the node hierarchy, PBR metallic-roughness factors, base color textures and emissive color,
+ * skins (up to 8 influences per vertex), morph targets (sparse or dense) and animation clips.
  */
 export async function parseGLTF(json: any, bin: Uint8Array | undefined, load: (uri: string) => Promise<ArrayBuffer>): Promise<Model> {
   const warnings = new Set<string>();
@@ -151,22 +208,16 @@ export async function parseGLTF(json: any, bin: Uint8Array | undefined, load: (u
     const buf = buffers[bv.buffer]!;
     return { bytes: buf.subarray(bv.byteOffset ?? 0, (bv.byteOffset ?? 0) + bv.byteLength), stride: bv.byteStride as number | undefined };
   };
-  const accessor = (i: number): Float32Array | Uint32Array => {
-    const a = json.accessors[i];
-    const n = COMPONENTS[a.type]!;
-    const count = a.count as number;
-    const out = a.componentType === 5126 ? new Float32Array(count * n) : new Uint32Array(count * n);
-    if (a.bufferView === undefined) return out;
-    const { bytes, stride } = view(a.bufferView);
+  const read = (out: Float32Array | Uint32Array, bufferView: number, byteOffset: number, componentType: number, normalized: boolean, n: number, count: number, packed = false) => {
+    const { bytes, stride } = view(bufferView);
     const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-    const size = { 5120: 1, 5121: 1, 5122: 2, 5123: 2, 5125: 4, 5126: 4 }[a.componentType as 5126]!;
-    const step = stride ?? size * n;
-    const base = a.byteOffset ?? 0;
+    const size = { 5120: 1, 5121: 1, 5122: 2, 5123: 2, 5125: 4, 5126: 4 }[componentType as 5126]!;
+    const step = packed ? size * n : (stride ?? size * n);
     for (let e = 0; e < count; e++) {
       for (let c = 0; c < n; c++) {
-        const off = base + e * step + c * size;
+        const off = byteOffset + e * step + c * size;
         let val: number;
-        switch (a.componentType) {
+        switch (componentType) {
           case 5126: val = dv.getFloat32(off, true); break;
           case 5125: val = dv.getUint32(off, true); break;
           case 5123: val = dv.getUint16(off, true); break;
@@ -174,10 +225,26 @@ export async function parseGLTF(json: any, bin: Uint8Array | undefined, load: (u
           case 5121: val = dv.getUint8(off); break;
           default: val = dv.getInt8(off);
         }
-        // Normalized integer attributes (e.g. quantized UVs).
-        if (a.normalized && a.componentType !== 5126) val /= { 5120: 127, 5121: 255, 5122: 32767, 5123: 65535 }[a.componentType as 5121] ?? 1;
+        // Normalized integer attributes (quantized UVs, colors, weights, rotations).
+        if (normalized && componentType !== 5126) val = Math.max(-1, val / ({ 5120: 127, 5121: 255, 5122: 32767, 5123: 65535 }[componentType as 5121] ?? 1));
         out[e * n + c] = val;
       }
+    }
+  };
+  const accessor = (i: number): Float32Array | Uint32Array => {
+    const a = json.accessors[i];
+    const n = COMPONENTS[a.type]!;
+    const count = a.count as number;
+    const out = a.componentType === 5126 || a.normalized ? new Float32Array(count * n) : new Uint32Array(count * n);
+    if (a.bufferView !== undefined) read(out, a.bufferView, a.byteOffset ?? 0, a.componentType, !!a.normalized, n, count);
+    // Sparse accessors (common for morph targets): values replace elements at the listed indices.
+    if (a.sparse) {
+      const sc = a.sparse.count as number;
+      const idx = new Uint32Array(sc);
+      read(idx, a.sparse.indices.bufferView, a.sparse.indices.byteOffset ?? 0, a.sparse.indices.componentType, false, 1, sc, true);
+      const vals = out instanceof Float32Array ? new Float32Array(sc * n) : new Uint32Array(sc * n);
+      read(vals, a.sparse.values.bufferView, a.sparse.values.byteOffset ?? 0, a.componentType, !!a.normalized, n, sc, true);
+      for (let e = 0; e < sc; e++) for (let c = 0; c < n; c++) out[idx[e]! * n + c] = vals[e * n + c]!;
     }
     return out;
   };
@@ -210,12 +277,25 @@ export async function parseGLTF(json: any, bin: Uint8Array | undefined, load: (u
       transparent: m.alphaMode === 'BLEND',
     };
   };
+  const nodes: ModelNodeData[] = (json.nodes ?? []).map((node: any) => ({
+    name: node.name,
+    translation: (node.translation ?? [0, 0, 0]) as Vec3,
+    rotation: (node.rotation ?? [0, 0, 0, 1]) as Quat,
+    scale: (node.scale ?? [1, 1, 1]) as Vec3,
+    matrix: node.matrix ? new Float32Array(node.matrix) : undefined,
+    children: node.children ?? [],
+    weights: node.weights,
+  }));
+  const skins: ModelSkin[] = (json.skins ?? []).map((sk: any) => {
+    const ibm = sk.inverseBindMatrices !== undefined ? accessor(sk.inverseBindMatrices) : undefined;
+    return { joints: sk.joints as number[], inverseBind: (sk.joints as number[]).map((_, j) => (ibm ? Float32Array.from(ibm.subarray(j * 16, j * 16 + 16)) : mat4.identity())) };
+  });
   const parts: ModelPart[] = [];
   const visit = (ni: number, parent: Mat4) => {
     const node = json.nodes[ni];
-    const local = node.matrix ? new Float32Array(node.matrix) : mat4.fromQuat((node.translation ?? [0, 0, 0]) as Vec3, node.rotation ?? [0, 0, 0, 1], (node.scale ?? [1, 1, 1]) as Vec3);
+    const nd = nodes[ni]!;
+    const local = nd.matrix ?? mat4.fromQuat(nd.translation, nd.rotation, nd.scale);
     const world = mat4.multiply(parent, local);
-    if (node.skin !== undefined) warnings.add('skinning');
     if (node.mesh !== undefined) {
       const mesh = json.meshes[node.mesh];
       for (const prim of mesh.primitives) {
@@ -223,14 +303,42 @@ export async function parseGLTF(json: any, bin: Uint8Array | undefined, load: (u
           warnings.add('non-triangle primitives');
           continue;
         }
-        if (prim.targets) warnings.add('morph targets');
         const positions = accessor(prim.attributes.POSITION) as Float32Array;
         const count = positions.length / 3;
         const indices = prim.indices !== undefined ? Uint32Array.from(accessor(prim.indices)) : new Uint32Array(count).map((_, i) => i);
         const normals = prim.attributes.NORMAL !== undefined ? Float32Array.from(accessor(prim.attributes.NORMAL)) : computeNormals({ positions, indices });
         const uvs = prim.attributes.TEXCOORD_0 !== undefined ? Float32Array.from(accessor(prim.attributes.TEXCOORD_0)) : new Float32Array(count * 2);
         const colors = prim.attributes.COLOR_0 !== undefined ? toRGBA(Float32Array.from(accessor(prim.attributes.COLOR_0)), count) : undefined;
-        parts.push({ geometry: { positions: Float32Array.from(positions), normals, uvs, indices, colors }, material: materialOf(prim.material), matrix: world, name: mesh.name });
+        const part: ModelPart = { geometry: { positions: Float32Array.from(positions), normals, uvs, indices, colors }, material: materialOf(prim.material), matrix: world, name: mesh.name, node: ni };
+        if (node.skin !== undefined && prim.attributes.JOINTS_0 !== undefined && prim.attributes.WEIGHTS_0 !== undefined) {
+          // JOINTS_0/WEIGHTS_0 (+ JOINTS_1/WEIGHTS_1): 4 or 8 influences per vertex.
+          const sets = prim.attributes.JOINTS_1 !== undefined && prim.attributes.WEIGHTS_1 !== undefined ? [0, 1] : [0];
+          const js = sets.map((k) => accessor(prim.attributes[`JOINTS_${k}`]));
+          const ws = sets.map((k) => accessor(prim.attributes[`WEIGHTS_${k}`]));
+          const per = 4 * sets.length;
+          part.skin = node.skin;
+          part.influences = per;
+          part.joints = new Uint32Array(count * per);
+          part.weights = new Float32Array(count * per);
+          for (let v = 0; v < count; v++) {
+            for (let k = 0; k < sets.length; k++) {
+              for (let c = 0; c < 4; c++) {
+                part.joints[v * per + k * 4 + c] = js[k]![v * 4 + c]!;
+                part.weights[v * per + k * 4 + c] = ws[k]![v * 4 + c]!;
+              }
+            }
+          }
+        }
+        if (prim.targets?.length) {
+          const names: string[] = mesh.extras?.targetNames ?? [];
+          part.morph = {
+            positions: prim.targets.map((t: any) => (t.POSITION !== undefined ? Float32Array.from(accessor(t.POSITION)) : new Float32Array(count * 3))),
+            normals: prim.targets.map((t: any) => (t.NORMAL !== undefined ? Float32Array.from(accessor(t.NORMAL)) : undefined)),
+            weights: prim.targets.map((_: unknown, i: number) => nd.weights?.[i] ?? mesh.weights?.[i] ?? 0),
+            names: prim.targets.map((_: unknown, i: number) => names[i] ?? String(i)),
+          };
+        }
+        parts.push(part);
       }
     }
     for (const c of node.children ?? []) visit(c, world);
@@ -238,8 +346,22 @@ export async function parseGLTF(json: any, bin: Uint8Array | undefined, load: (u
   const scene = json.scenes?.[json.scene ?? 0];
   const roots: number[] = scene?.nodes ?? (json.nodes ?? []).map((_: unknown, i: number) => i);
   for (const r of roots) visit(r, mat4.identity());
-  if (json.animations?.length) warnings.add('animations');
-  return { parts, warnings: [...warnings].map((w) => `${w} not imported`) };
+  const animations: ModelAnimation[] = (json.animations ?? []).map((an: any, ai: number) => {
+    const channels: AnimationChannel[] = [];
+    for (const ch of an.channels ?? []) {
+      const path = ch.target?.path;
+      if (ch.target?.node === undefined || !['translation', 'rotation', 'scale', 'weights'].includes(path)) {
+        warnings.add(`animation channels targeting ${path ?? 'unknown'}`);
+        continue;
+      }
+      const smp = an.samplers[ch.sampler];
+      const times = Float32Array.from(accessor(smp.input));
+      channels.push({ node: ch.target.node, path, interpolation: smp.interpolation ?? 'LINEAR', times, values: Float32Array.from(accessor(smp.output)) });
+    }
+    const duration = Math.max(0, ...channels.map((c) => c.times[c.times.length - 1] ?? 0));
+    return { name: an.name ?? `animation ${ai}`, duration, channels };
+  });
+  return { parts, warnings: [...warnings].map((w) => `${w} not imported`), nodes, roots, skins, animations };
 }
 
 function toRGBA(c: Float32Array, count: number): Float32Array {

@@ -28,6 +28,29 @@ function parseRate(r: string | undefined): number | undefined {
   return b ? a! / b : a;
 }
 
+/** Bits per channel implied by an ffmpeg pixel format name (rgb48be → 16, yuv420p10le → 10, rgbaf32le → 32, rgba → 8). */
+export function pixFmtDepth(pixFmt: string | undefined): number | undefined {
+  if (!pixFmt) return undefined;
+  if (/^nv(12|16|21|24|42)$/.test(pixFmt)) return 8; // these name their chroma layout, not the depth
+  if (/^nv20|^xv30/.test(pixFmt)) return 10;
+  if (/^xv36/.test(pixFmt)) return 12;
+  const m = /(f16|f32|48|64|16|14|12|10|9)(le|be)?$/.exec(pixFmt);
+  if (!m) return 8;
+  return m[1] === 'f32' ? 32 : m[1] === 'f16' || m[1] === '48' || m[1] === '64' ? 16 : Number(m[1]);
+}
+
+/** Decodes the first frame of an image or video as 16-bit straight RGBA (`rgba64le`, 8 bytes per pixel). */
+export async function decodeImage16(file: string): Promise<{ data: Buffer; width: number; height: number }> {
+  const info = await probe(file);
+  const data = await run(FFMPEG, ['-v', 'error', '-i', file, '-frames:v', '1', '-an', '-sn', '-dn', '-f', 'rawvideo', '-pix_fmt', 'rgba64le', '-']);
+  let width = info.width ?? 0;
+  let height = info.height ?? 0;
+  // ffmpeg applies display rotation; fall back to the stored size if the frame came out unrotated.
+  if (width * height * 8 !== data.length && height * width * 8 === data.length) [width, height] = [height, width];
+  if (!width || width * height * 8 !== data.length) throw new Error(`Unexpected 16-bit frame size for ${file}: ${data.length} bytes for ${width}x${height}`);
+  return { data, width, height };
+}
+
 const probeCache = new Map<string, Promise<MediaInfo>>();
 
 /** Probes a media file with ffprobe. */
@@ -37,7 +60,7 @@ export function probe(file: string): Promise<MediaInfo> {
     p = (async () => {
       const out = await run(FFPROBE, ['-v', 'error', '-print_format', 'json', '-show_streams', '-show_format', file]);
       const j = JSON.parse(out.toString()) as {
-        streams: { codec_type: string; codec_name?: string; width?: number; height?: number; r_frame_rate?: string; avg_frame_rate?: string; duration?: string; sample_rate?: string; channels?: number; tags?: Record<string, string>; side_data_list?: { rotation?: number }[]; disposition?: { attached_pic?: number } }[];
+        streams: { codec_type: string; codec_name?: string; pix_fmt?: string; width?: number; height?: number; r_frame_rate?: string; avg_frame_rate?: string; duration?: string; sample_rate?: string; channels?: number; tags?: Record<string, string>; side_data_list?: { rotation?: number }[]; disposition?: { attached_pic?: number } }[];
         format: { duration?: string; format_name?: string };
       };
       const v = j.streams.find((s) => s.codec_type === 'video' && !s.disposition?.attached_pic);
@@ -59,6 +82,7 @@ export function probe(file: string): Promise<MediaInfo> {
         channels: a?.channels,
         codec: v?.codec_name ?? a?.codec_name,
         rotation: rot || undefined,
+        bitDepth: v ? pixFmtDepth(v.pix_fmt) : undefined,
       };
     })();
     probeCache.set(file, p);

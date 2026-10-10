@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE fcpxml>
+<fcpxml version="1.10">
+  <resources>
+    <format id="r1" name="FFVideoFormat1080p25" frameDuration="100/2500s" width="1920" height="1080"/>
+    <asset id="r2" name="Wide" start="0s" duration="60s" hasVideo="1" hasAudio="1" format="r1">
+      <media-rep kind="original-media" src="file:///Media/Wide.mov"/>
+    </asset>
+    <asset id="r3" name="Close" start="0s" duration="60s" hasVideo="1" hasAudio="1" format="r1">
+      <media-rep kind="original-media" src="file:///Media/Close.mov"/>
+    </asset>
+    <asset id="r4" name="Lav" start="0s" duration="60s" hasAudio="1">
+      <media-rep kind="original-media" src="file:///Media/Lav.wav"/>
+    </asset>
+    <effect id="r5" name="Color Adjustments" uid="FFHDRColorAdjustmentsEffect"/>
+    <effect id="r6" name="Black &amp; White" uid=".../Effects.localized/Looks.localized/Black &amp; White.localized/Black &amp; White.moef"/>
+    <effect id="r7" name="Prism" uid=".../Prism.moef"/>
+    <effect id="r8" name="Gaussian Blur" uid="FFGaussianBlur"/>
+    <media id="r9" name="Interview MC">
+      <multicam format="r1" tcStart="0s">
+        <mc-angle name="Wide" angleID="a1">
+          <asset-clip ref="r2" offset="0s" name="Wide" start="0s" duration="60s"/>
+        </mc-angle>
+        <mc-angle name="Close" angleID="a2">
+          <gap offset="0s" start="0s" duration="2s"/>
+          <asset-clip ref="r3" offset="2s" name="Close" start="0s" duration="58s"/>
+        </mc-angle>
+        <mc-angle name="Lav" angleID="a3">
+          <asset-clip ref="r4" offset="0s" name="Lav" start="0s" duration="60s"/>
+        </mc-angle>
+      </multicam>
+    </media>
+  </resources>
+  <library>
+    <event name="Event">
+      <project name="Graded">
+        <sequence format="r1" duration="12s" tcStart="0s" tcFormat="NDF">
+          <spine>
+            <asset-clip ref="r2" offset="0s" name="Graded" start="0s" duration="4s">
+              <filter-video ref="r5" name="Color Adjustments">
+                <param name="Exposure" key="1" value="20"/>
+                <param name="Saturation" key="2" value="-50"/>
+                <param name="Temperature" key="3">
+                  <keyframeAnimation>
+                    <keyframe time="0s" value="0"/>
+                    <keyframe time="4s" value="30"/>
+                  </keyframeAnimation>
+                </param>
+              </filter-video>
+              <filter-video ref="r6" name="Black &amp; White"/>
+              <filter-video ref="r7" name="Prism"/>
+            </asset-clip>
+            <mc-clip ref="r9" offset="4s" name="Interview MC" start="5s" duration="4s">
+              <mc-source angleID="a2" srcEnable="video"/>
+              <mc-source angleID="a3" srcEnable="audio"/>
+            </mc-clip>
+            <asset-clip ref="r3" offset="8s" name="Soft" start="0s" duration="4s">
+              <filter-video ref="r8">
+                <param name="Amount" key="1" value="12"/>
+              </filter-video>
+            </asset-clip>
+          </spine>
+        </sequence>
+      </project>
+    </event>
+  </library>
+</fcpxml>

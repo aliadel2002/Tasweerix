@@ -1,5 +1,53 @@
 import type { Composition, MediaInfo, SceneNode } from '@tasweerix/core';
 
+/** A keyframe on the timeline: `t` in timeline seconds, `ease` a Tasweerix easing name (default linear). */
+export interface TKey<T> {
+  t: number;
+  v: T;
+  ease?: string;
+}
+/** A static value or keyframes. */
+export type TKeyed<T> = T | TKey<T>[];
+
+/** True for keyframes, false for a static value. */
+export function isKeys<T>(k: TKeyed<T>): k is TKey<T>[] {
+  return Array.isArray(k) && k.length > 0 && typeof k[0] === 'object' && k[0] !== null && !Array.isArray(k[0]) && 't' in (k[0] as object);
+}
+
+/** Maps a static value or every keyframe value. */
+export function mapKeyed<A, B>(k: TKeyed<A>, f: (a: A) => B): TKeyed<B>;
+export function mapKeyed<A, B>(k: TKeyed<A> | undefined, f: (a: A) => B): TKeyed<B> | undefined;
+export function mapKeyed<A, B>(k: TKeyed<A> | undefined, f: (a: A) => B): TKeyed<B> | undefined {
+  if (k === undefined) return undefined;
+  return isKeys(k) ? k.map((q) => ({ ...q, v: f(q.v) })) : f(k as A);
+}
+
+/** A filter in Tasweerix terms: `kind` is an `fx` builder / registered filter, params may be keyframed. */
+export interface TEffect {
+  kind: string;
+  params: Record<string, TKeyed<unknown>>;
+}
+
+/**
+ * Spatial adjustments of a clip, applied after it is fitted to the frame. Distances are in
+ * sequence pixels, y pointing down.
+ */
+export interface TTransform {
+  /** Offset of the picture's center from the frame center. */
+  position?: TKeyed<[number, number]>;
+  scale?: TKeyed<[number, number]>;
+  /** Degrees, clockwise. */
+  rotation?: TKeyed<number>;
+  /** Pivot of scale and rotation, relative to the picture's center. */
+  anchor?: [number, number];
+  /** 0 – 1. */
+  opacity?: TKeyed<number>;
+  /** How the picture fits the frame before the transform (default: fit inside it). */
+  conform?: 'fill' | 'none';
+  /** Edges trimmed off the picture, as fractions of its width / height. */
+  crop?: { left: number; right: number; top: number; bottom: number };
+}
+
 /** Editor-agnostic timeline model extracted from a composition. */
 export interface TClip {
   name: string;
@@ -22,6 +70,15 @@ export interface TClip {
   withAudio?: boolean;
   /** Text of a title clip (kind 'title'). */
   text?: string;
+  /** Position, scale, rotation, opacity and crop. */
+  transform?: TTransform;
+  /**
+   * Variable speed: timeline time (seconds) → source time (seconds, same reference as `sourceIn`),
+   * linear between keys and extended along the end segments. `speed` holds the average rate.
+   */
+  timeMap?: { t: number; v: number }[];
+  /** Effects and color corrections, applied in order. */
+  effects?: TEffect[];
 }
 
 export interface TTrack {
@@ -165,4 +222,14 @@ export function resolveTransitions(clips: TClip[]): { clip: TClip; start: number
     out.push({ clip: c, start, duration: Math.max(0, end - start), sourceIn, transition: c.transitionIn && i > 0 ? { duration: c.transitionIn.duration, type: c.transitionIn.type, at: c.start } : undefined });
   });
   return out;
+}
+
+/** Source time of a variable-speed clip at timeline time `t` (linear, extended along the end segments). */
+export function timeMapAt(map: { t: number; v: number }[], t: number): number {
+  if (map.length === 1) return map[0]!.v;
+  let i = 0;
+  while (i < map.length - 2 && t > map[i + 1]!.t) i++;
+  const a = map[i]!;
+  const b = map[i + 1]!;
+  return b.t > a.t ? a.v + ((t - a.t) * (b.v - a.v)) / (b.t - a.t) : a.v;
 }

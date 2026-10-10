@@ -1,4 +1,7 @@
-/** Straight-alpha float RGBA image (0..1, sRGB-encoded). */
+/**
+ * Straight-alpha float RGBA image (sRGB-encoded). Color is nominally 0..1 but may exceed 1 between ops
+ * (highlight headroom); alpha stays 0..1. `toRGBA8` clips at the output edge.
+ */
 export interface Bitmap {
   width: number;
   height: number;
@@ -28,6 +31,20 @@ export function fromRGBA8(data: Uint8ClampedArray | Uint8Array, width: number, h
   const out = new Float32Array(width * height * 4);
   for (let i = 0; i < out.length; i++) out[i] = data[i]! / 255;
   return { width, height, data: out };
+}
+
+/** 16-bit straight RGBA (e.g. ffmpeg `rgba64le`) → float bitmap. */
+export function fromRGBA16(data: Uint16Array, width: number, height: number): Bitmap {
+  const out = new Float32Array(width * height * 4);
+  for (let i = 0; i < out.length; i++) out[i] = data[i]! / 65535;
+  return { width, height, data: out };
+}
+
+/** Float bitmap → 16-bit straight RGBA, clipped to 0..1. */
+export function toRGBA16(b: Bitmap): Uint16Array {
+  const out = new Uint16Array(b.width * b.height * 4);
+  for (let i = 0; i < out.length; i++) out[i] = Math.round(Math.min(1, Math.max(0, b.data[i]!)) * 65535);
+  return out;
 }
 
 /**

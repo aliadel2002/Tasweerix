@@ -290,11 +290,17 @@ export interface ImageProps {
   /** Crop rectangle in source pixels. */
   crop: Rect | null;
   smoothing: boolean;
+  /**
+   * Corner pin: where the picture's corners (top-left, top-right, bottom-right, bottom-left) go, in
+   * the node's local coordinates. The picture is warped in perspective onto that quad (`size` and
+   * `fit` no longer apply). Animate it with keys, or drive it with a tracked plane (`pinToPlane`).
+   */
+  cornerPin: [Vec2, Vec2, Vec2, Vec2] | null;
 }
 export class ImageNode extends SceneNode<ImageProps> {
   info?: MediaInfo;
   override defaults() {
-    return { src: '', size: null, fit: 'contain' as Fit, crop: null, smoothing: true };
+    return { src: '', size: null, fit: 'contain' as Fit, crop: null, smoothing: true, cornerPin: null };
   }
   override async prepare(env: Env): Promise<void> {
     const src = this.props.src;
@@ -306,6 +312,18 @@ export function image(src: string, opts?: AnimProps<ImageProps & BaseProps> & No
   const [p, o] = split(opts as ShapeOpts<ImageProps>);
   return new ImageNode('image', { ...(p as AnimProps<ImageProps & BaseProps>), src }, o);
 }
+
+/** See `VideoNode.mediaTransform`. */
+export type MediaTransform =
+  | [number, number, number, number]
+  | [number, number, number, number, number, number, number, number, number]
+  | {
+      matrix: [number, number, number, number] | [number, number, number, number, number, number, number, number, number];
+      /** Rolling-shutter row shift [a1x, a1y, a2x, a2y]: p − (a1·s + a2·s²) with s = p.y / aspect, before `matrix`. */
+      rows: [number, number, number, number];
+      /** Frame height / width. */
+      aspect: number;
+    };
 
 export interface VideoProps extends ImageProps {
   volume: number;
@@ -326,12 +344,14 @@ export class VideoNode extends SceneNode<VideoProps> {
   loop = false;
   /**
    * Extra transform of the picture inside its box at a source time (stabilization, reframing):
-   * [a, b, tx, ty] maps frame coordinates — centered, in frame widths — to displayed ones
-   * (x' = a·x − b·y + tx, y' = b·x + a·y + ty). The result is clipped to the box.
+   * maps frame coordinates — centered, in frame widths — to displayed ones. Either a similarity
+   * [a, b, tx, ty] (x' = a·x − b·y + tx, y' = b·x + a·y + ty) or a row-major 3 × 3 homography
+   * (9 numbers) for perspective corrections, optionally with a rolling-shutter row correction
+   * applied first. The result is clipped to the box.
    */
-  mediaTransform?: (sourceTime: number) => [number, number, number, number] | null | undefined;
+  mediaTransform?: (sourceTime: number) => MediaTransform | null | undefined;
   override defaults() {
-    return { src: '', size: null, fit: 'contain' as Fit, crop: null, smoothing: true, volume: 1 };
+    return { src: '', size: null, fit: 'contain' as Fit, crop: null, smoothing: true, cornerPin: null, volume: 1 };
   }
   get src(): string {
     return this.props.src as string;

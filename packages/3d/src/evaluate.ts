@@ -1,7 +1,8 @@
-import { parseColor, type FrameContext, type Paint, type SceneNode, type Vec3 } from '@tasweerix/core';
+import { parseColor, resolve, type FrameContext, type Paint, type SceneNode, type Vec3 } from '@tasweerix/core';
 import type { Geometry } from './geometry';
 import type { ModelMaterial } from './loaders';
 import { mat4, v3, type Mat4 } from './math3d';
+import { clipIndex, deformPart, isPosable, partMatrix, partWeights, poseModel } from './pose';
 import { CAMERA_DEFAULTS, CameraNode, LightNode, MeshNode, Object3DNode, type Scene3DNode } from './nodes';
 
 /** sRGB color string → linear RGBA. */
@@ -15,8 +16,8 @@ export function linearColor(c: string | null | undefined, fallback: [number, num
 /** A drawable item of an evaluated scene. */
 export interface DrawItem {
   node: MeshNode;
-  /** Cache key and builder of the geometry. */
-  geometry: { key: string; build(): Geometry };
+  /** Cache key and builder of the geometry; `version` changes when deforming geometry must be rebuilt. */
+  geometry: { key: string; build(): Geometry; version?: string };
   matrix: Mat4;
   props: Record<string, any>;
   /** For model parts: the file's material (node props tint it). */
@@ -52,7 +53,10 @@ export interface EvalScene {
   exposure: number;
   toneMapping: 'none' | 'aces';
   shadowMapSize: number;
+  pointShadowMapSize: number;
   samples: number;
+  /** Image-based lighting: a built-in ('studio', 'sky') or an image/.hdr path. */
+  environment: { src: string; intensity: number; rotation: number; background: boolean; blur: number } | null;
 }
 
 const scaleVec = (s: Vec3 | number): Vec3 => (typeof s === 'number' ? [s, s, s] : s);
@@ -76,10 +80,22 @@ export function evaluateScene(scene: Scene3DNode, local: FrameContext): EvalScen
       const op = opacity * (p.opacity ?? 1);
       if (child instanceof MeshNode) {
         if (child.model) {
-          for (const part of child.model.parts) {
+          const model = child.model;
+          const posed = isPosable(model);
+          const clip = posed ? clipIndex(model, p.animation) : -1;
+          const t = clip >= 0 ? clipTime(model.animations![clip]!.duration, p, l) : 0;
+          const pose = posed ? poseModel(model, clip, t) : null;
+          const morphs = p.morphs ? Object.fromEntries(Object.entries(p.morphs as Record<string, unknown>).map(([k, v]) => [k, resolve(v as number, l)])) : null;
+          for (const part of model.parts) {
             let key = partKeys.get(part.geometry);
             if (!key) partKeys.set(part.geometry, (key = `part:${++partId}`));
-            items.push({ node: child, geometry: { key, build: () => part.geometry }, matrix: mat4.multiply(m, part.matrix), props: p, part: part.material, opacity: op, local: l });
+            let geometry: DrawItem['geometry'] = { key, build: () => part.geometry };
+            if (pose && (part.skin !== undefined || part.morph)) {
+              const weights = part.morph ? partWeights(part, pose, morphs) : null;
+              // Rebuilt only when the pose changes (clip time or weights).
+              geometry = { key, build: () => deformPart(model, part, pose, weights), version: `${clip}:${t.toFixed(6)}:${weights?.join(',') ?? ''}` };
+            }
+            items.push({ node: child, geometry, matrix: mat4.multiply(m, pose ? partMatrix(part, pose) : part.matrix), props: p, part: part.material, opacity: op, local: l });
           }
         } else {
           const g = child.geometryOf(p, l);
@@ -97,15 +113,25 @@ export function evaluateScene(scene: Scene3DNode, local: FrameContext): EvalScen
   };
   walk(scene, scene.childCtx(local), mat4.identity(), 1);
   const cam = cameraOf(camera?.props ?? CAMERA_DEFAULTS, camera?.world ?? mat4.identity());
+  const environment = typeof sp.environment === 'string' && sp.environment ? { src: sp.environment as string, intensity: sp.environmentIntensity ?? 1, rotation: sp.environmentRotation ?? 0, background: !!sp.environmentBackground, blur: sp.environmentBlur ?? 0 } : null;
   const amb = linearColor(sp.ambient);
-  const ai = sp.ambientIntensity ?? 0.35;
+  // An environment replaces the scene's flat ambient (ambient light nodes still add).
+  const ai = environment ? 0 : (sp.ambientIntensity ?? 0.35);
   const ambient: [number, number, number] = [amb[0] * ai, amb[1] * ai, amb[2] * ai];
   for (const l of lights) if (l.kind === 'ambient') for (let i = 0; i < 3; i++) ambient[i] += l.color[i]!;
   const directOrPoint = lights.filter((l) => l.kind !== 'ambient');
   // A default key light when the scene defines none.
   if (!lights.length) directOrPoint.push({ kind: 'directional', color: [1, 1, 1], position: [3, 5, 4], direction: v3.normalize([-3, -5, -4]), range: 0, castShadow: false });
   const fog = sp.fog ? { color: linearColor(sp.fog.color).slice(0, 3) as [number, number, number], near: sp.fog.near, far: sp.fog.far } : null;
-  return { items, lights: directOrPoint, camera: cam, ambient, background: sp.background ?? null, fog, exposure: sp.exposure ?? 1, toneMapping: sp.toneMapping ?? 'none', shadowMapSize: sp.shadowMapSize ?? 2048, samples: sp.samples ?? 4 };
+  return { items, lights: directOrPoint, camera: cam, ambient, background: sp.background ?? null, fog, exposure: sp.exposure ?? 1, toneMapping: sp.toneMapping ?? 'none', shadowMapSize: sp.shadowMapSize ?? 2048, pointShadowMapSize: sp.pointShadowMapSize ?? 1024, samples: sp.samples ?? 4, environment };
+}
+
+/** Clip time in seconds: `animationTime` if set, else the node's local time × speed + offset, looped or held. */
+function clipTime(duration: number, p: Record<string, any>, l: FrameContext): number {
+  const t = typeof p.animationTime === 'number' ? p.animationTime : l.time * (p.animationSpeed ?? 1) + (p.animationOffset ?? 0);
+  if (duration <= 0) return 0;
+  if (p.loop === false) return Math.max(0, Math.min(duration, t));
+  return ((t % duration) + duration) % duration;
 }
 
 function cameraOf(p: Record<string, any>, world: Mat4): EvalCamera {

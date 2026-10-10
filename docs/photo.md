@@ -28,6 +28,10 @@ tasweerix still edit.ts -o out/edited.jpg          # png | jpg | webp | avif
 tasweerix batch edit.ts -i "photos/*.jpg" -o out   # same script for every photo (props.src / props.name)
 ```
 
+Ops run on 32-bit float pixels. Sources with more than 8 bits per channel (16-bit PNG or TIFF) are
+decoded at full depth by the Tasweerix server, so heavy grades and shadow lifts don't start from
+8-bit steps; 8-bit sources are decoded by the browser as before.
+
 ## Operations (`op`)
 
 | Group | Operations |

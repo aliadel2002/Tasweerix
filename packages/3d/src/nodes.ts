@@ -113,6 +113,7 @@ export class MeshNode extends Object3DNode {
       if (!env.loadBinary) throw new Error('model(): this environment cannot load files');
       this.model = await loadModel(this.modelSrc, (p) => env.loadBinary!(p));
       if (this.model.warnings.length) this.meta.warnings = this.model.warnings;
+      if (this.model.animations?.length) this.meta.animations = this.model.animations.map((a) => a.name);
     }
     await super.prepare(env);
   }
@@ -172,8 +173,22 @@ export interface Scene3DProps {
   exposure: number;
   /** 'aces' filmic tone mapping or 'none'. */
   toneMapping: 'none' | 'aces';
-  /** Shadow map resolution. */
+  /** Shadow map resolution of directional lights. */
   shadowMapSize: number;
+  /** Resolution of each cube face of point light shadows. */
+  pointShadowMapSize: number;
+  /**
+   * Image-based lighting and reflections: 'studio' or 'sky' (built in), or an equirectangular
+   * image (.hdr for high dynamic range, or .png/.jpg). Replaces the flat `ambient` when set.
+   */
+  environment: string | null;
+  environmentIntensity: number;
+  /** Degrees around the y axis. */
+  environmentRotation: number;
+  /** Shows the environment behind the scene (instead of `background`). */
+  environmentBackground: boolean;
+  /** Blur of the visible background, 0…1. */
+  environmentBlur: number;
   /** Multisampling (1 disables). */
   samples: number;
 }
@@ -181,7 +196,7 @@ export interface Scene3DProps {
 /** A 3D viewport: renders its 3D children with a camera into a 2D layer of the composition. */
 export class Scene3DNode extends SceneNode<Scene3DProps> {
   override defaults() {
-    return { size: null, background: null, ambient: '#ffffff', ambientIntensity: 0.35, fog: null, exposure: 1, toneMapping: 'none' as const, shadowMapSize: 2048, samples: 4 };
+    return { size: null, background: null, ambient: '#ffffff', ambientIntensity: 0.35, fog: null, exposure: 1, toneMapping: 'none' as const, shadowMapSize: 2048, pointShadowMapSize: 1024, samples: 4, environment: null, environmentIntensity: 1, environmentRotation: 0, environmentBackground: false, environmentBlur: 0 };
   }
 }
 
@@ -275,11 +290,34 @@ export function mesh(geometry: Geometry, o?: MeshOptions): MeshNode {
   return meshNode('mesh', () => ({ key: id, build: () => geometry }), o);
 }
 
-/** A glTF (.glb/.gltf) or OBJ model. Node material props tint and override the file's materials. */
-export function model(src: string, o?: MeshOptions): MeshNode {
+export interface ModelProps {
+  /** Animation clip to play, by name or index (null = rest pose). Default: the first clip. */
+  animation: string | number | null;
+  /** Playback rate and start offset (seconds) of the clip relative to the node's own time. */
+  animationSpeed: number;
+  animationOffset: number;
+  /** Loops the clip (otherwise it holds its last pose). */
+  loop: boolean;
+  /** Explicit clip time in seconds (overrides speed and offset; animate it to scrub). */
+  animationTime: number | null;
+  /** Morph target weights by target name or index, e.g. `{ smile: keys([[0, 0], [1, 1]]) }`. */
+  morphs: Record<string, Animatable<number>> | null;
+}
+
+/**
+ * A glTF (.glb/.gltf) or OBJ model. Node material props tint and override the file's materials.
+ * Skinned and morphing glTF models play their animation clips (the first one by default).
+ */
+export function model(src: string, o?: MeshOptions<ModelProps>): MeshNode {
   const n = meshNode('model', () => null, o);
   n.modelSrc = src;
   // Model files carry their own colors: white tint by default.
+  n.props.animation ??= 0;
+  n.props.animationSpeed ??= 1;
+  n.props.animationOffset ??= 0;
+  n.props.loop ??= true;
+  n.props.animationTime ??= null;
+  n.props.morphs ??= null;
   return n;
 }
 
@@ -318,12 +356,12 @@ export function camera3d(o?: A<Transform3D & CameraProps> & Options3D): CameraNo
 }
 
 export const light = {
-  /** Sun-like light from `position` toward `target`; `castShadow` enables a shadow map. */
+  /** Sun-like light from `position` toward `target`; `castShadow` enables a shadow map (up to 4 lights). */
   directional(o?: A<Transform3D & Omit<LightProps, 'kind'>> & Options3D): LightNode {
     const [p, opts] = split(o);
     return new LightNode('light3d', { ...p, kind: 'directional' }, opts);
   },
-  /** Light radiating from a point with distance falloff. */
+  /** Light radiating from a point with distance falloff; `castShadow` renders a cube shadow map (up to 4 lights). */
   point(o?: A<Transform3D & Omit<LightProps, 'kind'>> & Options3D): LightNode {
     const [p, opts] = split(o);
     return new LightNode('light3d', { position: [0, 2, 2], ...p, kind: 'point' }, opts);

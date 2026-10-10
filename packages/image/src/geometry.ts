@@ -140,9 +140,9 @@ export function resize(b: Bitmap, width: number, height: number): Bitmap {
     const a = Math.min(1, Math.max(0, v[i + 3]!));
     v[i + 3] = a;
     if (a > 1e-6) {
-      v[i] = Math.min(1, Math.max(0, v[i]! / a));
-      v[i + 1] = Math.min(1, Math.max(0, v[i + 1]! / a));
-      v[i + 2] = Math.min(1, Math.max(0, v[i + 2]! / a));
+      v[i] = Math.max(0, v[i]! / a);
+      v[i + 1] = Math.max(0, v[i + 1]! / a);
+      v[i + 2] = Math.max(0, v[i + 2]! / a);
     } else v[i] = v[i + 1] = v[i + 2] = 0;
   }
   return { width: W, height: H, data: v };

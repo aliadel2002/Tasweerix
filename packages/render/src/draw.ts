@@ -13,6 +13,7 @@ import {
   starPoints,
   trimPolylines,
   VideoNode,
+  type MediaTransform,
   type PathData,
   type Rect,
   type ShapeStyle,
@@ -20,6 +21,7 @@ import {
   type Vec2,
 } from '@tasweerix/core';
 import { FONT_FILE_RE } from './assets';
+import { GLSL_PRELUDE } from './gl';
 import { isVisiblePaint, toCanvasPaint } from './paint';
 import { registerDrawer, Renderer, type DrawContext } from './renderer';
 import type { Ctx2D } from './surface';
@@ -161,7 +163,101 @@ registerDrawer('group', (d) => {
 
 // ------------------------------------------------------------ media
 
-export function drawMedia(d: DrawContext, img: CanvasImageSource & { width: number; height: number }, natW: number, natH: number, xf?: [number, number, number, number] | null) {
+/**
+ * Samples the source through an inverse homography (centered coordinates in frame widths): each
+ * output pixel looks up where it came from. Pixels mapping outside the picture stay transparent.
+ */
+const WARP_FRAG = `${GLSL_PRELUDE}
+uniform vec3 uH0;
+uniform vec3 uH1;
+uniform vec3 uH2;
+uniform vec4 uCrop;
+uniform float uAspect;
+uniform vec4 uRows;
+uniform float uRowAspect;
+void main() {
+  vec3 q = vec3(vUv.x - 0.5, (vUv.y - 0.5) * uAspect, 1.0);
+  vec3 p = vec3(dot(uH0, q), dot(uH1, q), dot(uH2, q));
+  if (p.z <= 0.0) { outColor = vec4(0.0); return; }
+  vec2 c = p.xy / p.z;
+  // Rolling shutter: the source point s satisfies s − shift(row of s) = c (a few fixed-point steps).
+  vec2 s = c;
+  for (int k = 0; k < 4; k++) {
+    float r = s.y / uRowAspect;
+    s = c + uRows.xy * r + uRows.zw * r * r;
+  }
+  vec2 uv = vec2(s.x + 0.5, s.y / uAspect + 0.5);
+  if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) { outColor = vec4(0.0); return; }
+  outColor = texture(uTex, uCrop.xy + uv * uCrop.zw);
+}`;
+
+/** Corner pin: each output pixel maps through a homography to the picture's unit square. */
+const PIN_FRAG = `${GLSL_PRELUDE}
+uniform vec3 uH0;
+uniform vec3 uH1;
+uniform vec3 uH2;
+uniform vec4 uCrop;
+void main() {
+  vec3 q = vec3(vUv, 1.0);
+  vec3 p = vec3(dot(uH0, q), dot(uH1, q), dot(uH2, q));
+  if (p.z <= 0.0) { outColor = vec4(0.0); return; }
+  vec2 uv = p.xy / p.z;
+  if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) { outColor = vec4(0.0); return; }
+  outColor = texture(uTex, uCrop.xy + uv * uCrop.zw);
+}`;
+
+/** Homography (row-major) mapping the unit square (0,0) (1,0) (1,1) (0,1) onto a quad (Heckbert). */
+function squareToQuad(q: readonly Vec2[]): number[] | null {
+  const [[x0, y0], [x1, y1], [x2, y2], [x3, y3]] = q as Vec2[] as [Vec2, Vec2, Vec2, Vec2];
+  const dx1 = x1 - x2;
+  const dx2 = x3 - x2;
+  const dx3 = x0 - x1 + x2 - x3;
+  const dy1 = y1 - y2;
+  const dy2 = y3 - y2;
+  const dy3 = y0 - y1 + y2 - y3;
+  const den = dx1 * dy2 - dx2 * dy1;
+  if (Math.abs(den) < 1e-12) return null;
+  const g = (dx3 * dy2 - dx2 * dy3) / den;
+  const h = (dx1 * dy3 - dx3 * dy1) / den;
+  return [x1 - x0 + g * x1, x3 - x0 + h * x3, x0, y1 - y0 + g * y1, y3 - y0 + h * y3, y0, g, h, 1];
+}
+
+const mul3 = (a: number[], b: number[]) => [0, 1, 2].flatMap((i) => [0, 1, 2].map((j) => a[i * 3]! * b[j]! + a[i * 3 + 1]! * b[3 + j]! + a[i * 3 + 2]! * b[6 + j]!));
+
+/** Draws a picture warped onto `quad` (local coordinates) on the GPU. */
+function drawCornerPinned(d: DrawContext, img: CanvasImageSource & { width: number; height: number }, quad: Vec2[], src: [number, number, number, number]) {
+  const G = squareToQuad(quad);
+  if (!G || quad.some((p) => !Number.isFinite(p[0]) || !Number.isFinite(p[1]))) return;
+  const xs = quad.map((p) => p[0]);
+  const ys = quad.map((p) => p[1]);
+  const x0 = Math.min(...xs);
+  const y0 = Math.min(...ys);
+  const bw = Math.max(...xs) - x0;
+  const bh = Math.max(...ys) - y0;
+  if (bw < 1e-6 || bh < 1e-6) return;
+  // Output resolution follows the node's on-screen scale.
+  const m = d.matrix;
+  const k = Math.sqrt(Math.abs(m[0] * m[3] - m[1] * m[2])) * d.renderer.scale;
+  const w = Math.max(1, Math.min(4096, Math.round(bw * k)));
+  const h = Math.max(1, Math.min(4096, Math.round(bh * k)));
+  const M = mul3(invert3(G), [bw, 0, x0, 0, bh, y0, 0, 0, 1]);
+  const gl = d.renderer.gl;
+  const tex = gl.upload(img as TexImageSource);
+  const out = gl.run(PIN_FRAG, { uTex: tex, uH0: M.slice(0, 3), uH1: M.slice(3, 6), uH2: M.slice(6, 9), uCrop: src }, gl.target(w, h));
+  const warped = gl.output(out);
+  d.ctx.drawImage(warped, 0, 0, w, h, x0, y0, bw, bh);
+  warped.close?.();
+  gl.release(tex);
+  gl.release(out);
+}
+
+/** Inverse of a row-major 3 × 3 matrix (unnormalized: the scale cancels in the projection). */
+function invert3(m: readonly number[]): number[] {
+  const [a, b, c, d, e, f, g, h, i] = m as number[];
+  return [e! * i! - f! * h!, c! * h! - b! * i!, b! * f! - c! * e!, f! * g! - d! * i!, a! * i! - c! * g!, c! * d! - a! * f!, d! * h! - e! * g!, b! * g! - a! * h!, a! * e! - b! * d!];
+}
+
+export function drawMedia(d: DrawContext, img: CanvasImageSource & { width: number; height: number }, natW: number, natH: number, xf?: MediaTransform | null) {
   const crop = d.props.crop as Rect | null;
   const sx = crop?.x ?? 0;
   const sy = crop?.y ?? 0;
@@ -174,6 +270,12 @@ export function drawMedia(d: DrawContext, img: CanvasImageSource & { width: numb
   // Source rect is expressed in natural pixels; the served frame may be scaled.
   const kx = img.width / natW;
   const ky = img.height / natH;
+  const pin = d.props.cornerPin as Vec2[] | null | undefined;
+  if (pin && pin.length === 4) {
+    d.ctx.imageSmoothingEnabled = true;
+    drawCornerPinned(d, img, pin, [(sx * kx) / img.width, (sy * ky) / img.height, (sw * kx) / img.width, (sh * ky) / img.height]);
+    return;
+  }
   const clip = d.props.fit === 'cover' || !!xf;
   if (clip) {
     d.ctx.save();
@@ -183,14 +285,50 @@ export function drawMedia(d: DrawContext, img: CanvasImageSource & { width: numb
     else d.ctx.rect(-size[0] / 2 + fit.x, -size[1] / 2 + fit.y, fit.width, fit.height);
     d.ctx.clip();
   }
-  if (xf) {
-    const cx = -size[0] / 2 + fit.x + fit.width / 2;
-    const cy = -size[1] / 2 + fit.y + fit.height / 2;
+  const dx = -size[0] / 2 + fit.x;
+  const dy = -size[1] / 2 + fit.y;
+  // Rolling-shutter rows and perspective terms cannot be expressed as a 2D canvas transform: warp on the GPU.
+  const rows = xf && !Array.isArray(xf) ? xf : null;
+  const m = rows ? rows.matrix : (xf as Exclude<MediaTransform, { rows: unknown }> | null | undefined);
+  if (rows || (m?.length === 9 && (Math.abs(m[6]) > 1e-9 || Math.abs(m[7]) > 1e-9))) {
+    const gl = d.renderer.gl;
+    const src = gl.upload(img as TexImageSource);
+    const w = Math.max(1, Math.round(sw * kx));
+    const h = Math.max(1, Math.round(sh * ky));
+    const inv = invert3(m!.length === 9 ? m! : [m![0], -m![1], m![2], m![1], m![0], m![3], 0, 0, 1]);
+    const out = gl.run(
+      WARP_FRAG,
+      {
+        uTex: src,
+        uH0: inv.slice(0, 3),
+        uH1: inv.slice(3, 6),
+        uH2: inv.slice(6, 9),
+        uCrop: [(sx * kx) / img.width, (sy * ky) / img.height, (sw * kx) / img.width, (sh * ky) / img.height],
+        uAspect: sh / sw,
+        uRows: rows?.rows ?? [0, 0, 0, 0],
+        uRowAspect: rows?.aspect ?? sh / sw,
+      },
+      gl.target(w, h),
+    );
+    const warped = gl.output(out);
+    d.ctx.drawImage(warped, 0, 0, w, h, dx, dy, fit.width, fit.height);
+    warped.close?.();
+    gl.release(src);
+    gl.release(out);
+    if (clip) d.ctx.restore();
+    return;
+  }
+  if (m) {
+    const cx = dx + fit.width / 2;
+    const cy = dy + fit.height / 2;
     d.ctx.translate(cx, cy);
-    d.ctx.transform(xf[0], xf[1], -xf[1], xf[0], xf[2] * fit.width, xf[3] * fit.width);
+    if (m.length === 9) {
+      const k = 1 / m[8];
+      d.ctx.transform(m[0] * k, m[3] * k, m[1] * k, m[4] * k, m[2] * k * fit.width, m[5] * k * fit.width);
+    } else d.ctx.transform(m[0], m[1], -m[1], m[0], m[2] * fit.width, m[3] * fit.width);
     d.ctx.translate(-cx, -cy);
   }
-  d.ctx.drawImage(img, sx * kx, sy * ky, sw * kx, sh * ky, -size[0] / 2 + fit.x, -size[1] / 2 + fit.y, fit.width, fit.height);
+  d.ctx.drawImage(img, sx * kx, sy * ky, sw * kx, sh * ky, dx, dy, fit.width, fit.height);
   if (clip) d.ctx.restore();
 }
 
