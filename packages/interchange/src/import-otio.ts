@@ -1,5 +1,6 @@
 import type { MediaInfo } from '@tasweerix/core';
-import type { TimelineModel } from './model';
+import type { TEffect, TimelineModel } from './model';
+import { mapEffect } from './effects';
 import { applyTransition, baseName, emptyModel, finishModel, isImagePath, transitionKind, urlToPath, type PlacedClip, type TransitionMark } from './util';
 
 type Json = Record<string, any>;
@@ -94,11 +95,30 @@ export function fromOTIO(text: string): TimelineModel {
         const ref = mediaRef(item) ?? {};
         const tx = (item.metadata?.tasweerix ?? {}) as Json;
         let speed = 1;
+        const effects: TEffect[] = [];
         for (const fx of item.effects ?? []) {
           const fk = schema(fx);
           if (fk === 'LinearTimeWarp') speed *= Number(fx.time_scalar ?? 1);
           else if (fk === 'FreezeFrame') speed = 0;
-          else notes.add(`effect ${fx.effect_name || fx.name || fk} on ${item.name}`);
+          else {
+            // Parameters live in the effect's metadata, usually under the writing application's key.
+            const values = new Map<string, number>();
+            const collect = (o: unknown) => {
+              if (!o || typeof o !== 'object') return;
+              for (const [k, v] of Object.entries(o as Json)) {
+                if (typeof v === 'number') values.set(k.toLowerCase().replace(/_/g, ' '), v);
+                else collect(v);
+              }
+            };
+            collect(fx.metadata);
+            const label = fx.effect_name || fx.name || fk;
+            const mapped = !isAudio ? mapEffect(label, (...names) => names.map((n) => values.get(n)).find((v) => v !== undefined)) : null;
+            if (!mapped) notes.add(`effect ${label} on ${item.name}`);
+            else {
+              effects.push(mapped.effect);
+              if (mapped.approximate) notes.add(`effect ${label} on ${item.name} (approximated with fx.${mapped.effect.kind}, check the look)`);
+            }
+          }
         }
         markersOf(item, (t) => start + (t - sr.start));
         const refKind = schema(ref);
@@ -134,7 +154,7 @@ export function fromOTIO(text: string): TimelineModel {
         }
         e = Math.min(e, window[1]);
         if (e - s <= 1e-6) return;
-        placed.push({ lane: isAudio ? -1000 - lane : lane, name: item.name || baseName(src) || 'clip', src, url: url || src, kind: clipKind, start: s, duration: e - s, sourceIn: srcIn, speed, info, gainDb: typeof tx.gainDb === 'number' ? tx.gainDb : undefined, text });
+        placed.push({ lane: isAudio ? -1000 - lane : lane, name: item.name || baseName(src) || 'clip', src, url: url || src, kind: clipKind, start: s, duration: e - s, sourceIn: srcIn, speed, info, gainDb: typeof tx.gainDb === 'number' ? tx.gainDb : undefined, text, effects: effects.length ? effects : undefined });
         if (!rate) rate = Number(item.source_range?.duration?.rate) || 0;
       });
     }

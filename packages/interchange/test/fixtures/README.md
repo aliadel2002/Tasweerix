@@ -12,3 +12,6 @@
 - `transforms.fcpxml` and `transforms.xml` are hand written in the shapes Final Cut Pro and Premiere
   Pro export for transforms (position, scale, rotation, anchor, keyframes), opacity, crop, variable
   speed ramps and reverse playback.
+- `effects.fcpxml` and `effects.xml` add effects and color corrections (with keyframes), an effect
+  without a Tasweerix counterpart, and multicam clips (FCPXML `mc-clip` with separate video and
+  audio angles, FCP7 `multiclip`).

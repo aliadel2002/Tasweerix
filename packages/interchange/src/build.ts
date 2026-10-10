@@ -66,7 +66,7 @@ function clipOptions(c: TClip, m: TimelineModel, timed: boolean, rooted = timed)
     o.duration = n4(c.duration);
     o.size = Math.round(m.height / 13.5);
     o.fill = '#ffffff';
-    return { ...o, ...transformOptions(c, m, rooted, false) };
+    return { ...o, ...transformOptions(c, m, rooted, false), ...filterOptions(c) };
   }
   if (c.kind === 'image') o.duration = n4(c.duration);
   else if (c.timeMap && c.timeMap.length > 1) {
@@ -87,7 +87,7 @@ function clipOptions(c: TClip, m: TimelineModel, timed: boolean, rooted = timed)
   }
   // Editors scale clips to fit the frame by default.
   o.size = [m.width, m.height];
-  return { ...o, ...transformOptions(c, m, rooted, true) };
+  return { ...o, ...transformOptions(c, m, rooted, true), ...filterOptions(c) };
 }
 
 /** Position, scale, rotation, opacity and crop of a clip as node options. */
@@ -121,6 +121,25 @@ function transformOptions(c: TClip, m: TimelineModel, rooted: boolean, media: bo
   return o;
 }
 
+/** A filter: written as `fx.<kind>({ ... })` in code, built as a FilterSpec for nodes. */
+class FxCall {
+  constructor(
+    readonly kind: string,
+    readonly params: Record<string, unknown>,
+  ) {}
+}
+
+/** Effects of a clip as filters (keyframes become clip-local). */
+function filterOptions(c: TClip): Record<string, unknown> {
+  if (!c.effects?.length) return {};
+  const filters = c.effects.map((e) => {
+    const params: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(e.params)) params[k] = keyed(v, c, (x) => (typeof x === 'number' ? n4(x) : x));
+    return new FxCall(e.kind, params);
+  });
+  return { filters };
+}
+
 /** A plain object written as an object literal in code. */
 class ObjLiteral {
   constructor(readonly o: Record<string, unknown>) {}
@@ -136,14 +155,16 @@ function audioOptions(c: TClip): Record<string, unknown> {
 
 function objCode(o: Record<string, unknown>): string {
   const v = (x: unknown): string =>
-    x instanceof KeyList ? `keys(${v(x.list)})` : x instanceof ObjLiteral ? objCode(x.o) : Array.isArray(x) ? `[${x.map(v).join(', ')}]` : typeof x === 'string' ? str(x) : String(x);
+    x instanceof KeyList ? `keys(${v(x.list)})` : x instanceof FxCall ? `fx.${x.kind}(${Object.keys(x.params).length ? objCode(x.params) : ''})` : x instanceof ObjLiteral ? objCode(x.o) : Array.isArray(x) ? `[${x.map(v).join(', ')}]` : typeof x === 'string' ? str(x) : String(x);
   return `{ ${Object.entries(o).map(([k, x]) => `${k}: ${v(x)}`).join(', ')} }`;
 }
 
 /** Turns code-only option values (keyframes, literals) into runtime values. */
 function liveOptions(o: Record<string, unknown>): Record<string, any> {
   const out: Record<string, unknown> = {};
-  for (const [k, x] of Object.entries(o)) out[k] = x instanceof KeyList ? keys(x.list as KeyInput<unknown>[]) : x instanceof ObjLiteral ? x.o : x;
+  const live = (x: unknown): unknown =>
+    x instanceof KeyList ? keys(x.list as KeyInput<unknown>[]) : x instanceof ObjLiteral ? x.o : x instanceof FxCall ? { kind: x.kind, params: liveOptions(x.params) } : Array.isArray(x) ? x.map(live) : x;
+  for (const [k, x] of Object.entries(o)) out[k] = live(x);
   return out;
 }
 
@@ -151,7 +172,10 @@ const isRemapped = (c: TClip) => c.kind === 'video' && !!c.timeMap && c.timeMap.
 
 function clipCall(c: TClip, m: TimelineModel, timed: boolean, used: Set<string>): string {
   const opts = clipOptions(c, m, timed);
-  if (Object.values(opts).some((x) => x instanceof KeyList)) used.add('keys');
+  const deep = (x: unknown): unknown[] => (x instanceof FxCall ? [x, ...Object.values(x.params).flatMap(deep)] : Array.isArray(x) ? x.flatMap(deep) : [x]);
+  const all = Object.values(opts).flatMap(deep);
+  if (all.some((x) => x instanceof KeyList)) used.add('keys');
+  if (all.some((x) => x instanceof FxCall)) used.add('fx');
   const o = objCode(opts);
   if (c.kind === 'title') return `text(${str(c.text ?? c.name)}, ${o})`;
   const call = `${c.kind === 'image' ? 'image' : 'video'}(${str(c.src)}, ${o})`;
@@ -197,7 +221,7 @@ export function timelineToCode(m: TimelineModel, opts: { source?: string; format
     `import { ${[...used].sort().join(', ')} } from 'tasweerix';`,
     '',
     `// Imported${opts.source ? ` from ${opts.source}` : ''}${opts.format ? ` (${opts.format})` : ''} with tasweerix import-timeline.`,
-    ...(m.unsupported.length ? ['// Not imported (rebuild these in code if you need them):', ...m.unsupported.slice(0, 30).map((u) => `//   - ${u}`)] : []),
+    ...(m.unsupported.length ? ['// Not imported or approximated (check these, rebuild them in code if you need them):', ...m.unsupported.slice(0, 30).map((u) => `//   - ${u}`)] : []),
   ];
   const options = objCode({ name: m.name, width: m.width, height: m.height, fps: m.fps, duration: n4(m.duration) });
   return `${header.join('\n')}\nexport default composition(${options}, (c) => {\n${body.join('\n')}\n});\n`;

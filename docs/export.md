@@ -52,9 +52,12 @@ The edit becomes **plain, editable TypeScript**: `video()`/`image()`/`text()` ca
 markers, so the studio can keep editing it two ways. Transforms from Final Cut Pro (`adjust-transform`,
 `adjust-crop`, `adjust-blend`) and Premiere (Basic Motion, Opacity, Crop) become `position`, `scale`,
 `rotation`, `anchor`, `opacity` and `crop` options, with `keys([...])` where they are keyframed.
-Variable speed ramps and reverse playback become `.remap(keys([...]))`. Media outside the project is
-symlinked into `assets/` (or copied with `--copy-media`); anything that could not be imported
-(effects, color corrections, multicam) is listed as a comment at the top of the file.
+Variable speed ramps and reverse playback become `.remap(keys([...]))`. Effects and color
+corrections become `filters: [fx.blur(...), fx.grade(...)]` (color tools are matched by parameter
+name, so they are flagged for a look check), and multicam clips are flattened to their active video
+and audio angles. Media outside the project is symlinked into `assets/` (or copied with
+`--copy-media`); anything that could not be imported or was approximated (effects without an `fx`
+counterpart, inactive angles) is listed as a comment at the top of the file.
 
 To keep the edit in its original file and build on it, import at build time instead:
 

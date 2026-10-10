@@ -162,7 +162,8 @@ describe('timeline import: files written by other tools', () => {
     expect(m.video[1]!.clips[0]!.text).toBe('Hello');
     expect(m.audio[0]!.clips[0]).toMatchObject({ kind: 'audio', start: 5, duration: 4, sourceIn: 30, gainDb: -9 });
     expect(m.markers).toEqual([expect.objectContaining({ time: 1, label: 'Beat' })]);
-    expect(m.unsupported.some((u) => u.includes('Gaussian Blur'))).toBe(true);
+    expect(m.video[0]!.clips[4]!.effects).toEqual([{ kind: 'blur', params: {} }]);
+    expect(m.unsupported.some((u) => u.includes('Gaussian Blur'))).toBe(false);
   });
 
   it('detects formats from content and extension', () => {
@@ -193,15 +194,14 @@ describe('timeline import: building projects', () => {
   it('generates editable TypeScript that typechecks and rebuilds the same edit', async () => {
     const m = fromFCPXML(fixture('final-cut.fcpxml'));
     const code = timelineToCode(m, { source: 'final-cut.fcpxml', format: 'FCPXML' });
-    expect(code).toContain("import { audio, composition, image, text, transition, video } from 'tasweerix';");
+    expect(code).toContain("import { audio, composition, fx, image, text, transition, video } from 'tasweerix';");
     expect(code).toContain("      video('/Volumes/Media/A Roll.mov', { trim: [2, 8], size: [1280, 720] }),");
-    expect(code).toContain("c.add(video('/Volumes/Media/B.mov', { start: 13, trim: [0, 2], speed: 0.5, size: [1280, 720] }));");
+    expect(code).toContain("c.add(video('/Volumes/Media/B.mov', { start: 13, trim: [0, 2], speed: 0.5, size: [1280, 720], filters: [fx.blur()] }));");
     expect(code).toContain("transition.chain(");
     expect(code).toContain("{ type: 'crossfade', duration: 2 }");
     expect(code).toContain("text('Hello', { start: 1, duration: 2, size: 53, fill: '#ffffff' })");
     expect(code).toContain("c.audio(audio('/Volumes/Media/song.m4a', { start: 5, trim: [30, 34], gain: -9 }));");
     expect(code).toContain("c.marker(1, 'Beat');");
-    expect(code).toContain('//   - Gaussian Blur effect on Slow');
     // Point the import at the umbrella package sources, then typecheck with the repo's settings.
     const file = join(dir, 'imported.ts');
     writeFileSync(file, code.replace("from 'tasweerix'", "from '../../../tasweerix/src/index'"));

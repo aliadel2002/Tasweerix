@@ -7,4 +7,5 @@ export * from './import-fcpxml';
 export * from './import-otio';
 export * from './formats';
 export * from './build';
+export { mapEffect, type MappedEffect, type ParamReader } from './effects';
 export { urlToPath } from './util';

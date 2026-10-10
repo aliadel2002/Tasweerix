@@ -1,5 +1,6 @@
 import { parseXml, type XmlNode } from '@tasweerix/core';
 import type { TClip, TKey, TKeyed, TTransform, TimelineModel } from './model';
+import { mapEffect } from './effects';
 import { applyTimeMap, applyTransition, baseName, emptyModel, find, findAll, finishModel, isAudioPath, isImagePath, kid, kids, kidText, textOf, transitionKind, urlToPath, type PlacedClip, type TransitionMark } from './util';
 
 const rateOf = (n: XmlNode | undefined): number | undefined => {
@@ -51,6 +52,7 @@ export function fromXMEML(text: string): TimelineModel {
       let titleText: string | undefined;
       let graph: { when: number; value: number }[] = [];
       const motion: XmlNode[] = [];
+      const others: XmlNode[] = [];
       for (const eff of findAll(item, 'effect')) {
         const id = (kidText(eff, 'effectid') ?? '').toLowerCase();
         const params = kids(eff, 'parameter');
@@ -66,6 +68,7 @@ export function fromXMEML(text: string): TimelineModel {
           const lv = Number(kidText(param('level'), 'value'));
           if (lv > 0) gainDb = +(20 * Math.log10(lv)).toFixed(2);
         } else if (item.tag === 'generatoritem' && param('str')) titleText = kidText(param('str'), 'value');
+        else if (id && item.tag === 'clipitem' && !audio && (kidText(eff, 'mediatype') ?? 'video') !== 'audio') others.push(eff);
         else if (id && item.tag === 'clipitem') notes.add(`${kidText(eff, 'name') ?? id} effect on ${kidText(item, 'name')}`);
       }
       const inF = num(item, 'in');
@@ -83,7 +86,7 @@ export function fromXMEML(text: string): TimelineModel {
         else notes.add(`generator ${name}`);
         continue;
       }
-      const fileRef = kid(item, 'file');
+      const fileRef = kid(item, 'file') ?? multiclipFile(item, audio, (n) => notes.add(n));
       const file = fileRef ? (files.get(fileRef.attrs.id ?? '') ?? fileRef) : undefined;
       const url = kidText(file, 'pathurl') ?? kidText(file, 'name') ?? name;
       const path = urlToPath(url);
@@ -116,7 +119,24 @@ export function fromXMEML(text: string): TimelineModel {
         if (audio) notes.add(`reverse playback on ${name} (imported forward)`);
         else applyTimeMap(clip, [{ t: start, v: outF / r }, { t: end, v: inF / r }], notes);
       }
-      if (motion.length) clip.transform = motionOf(motion, (when, whens) => start + (when - base(whens)) / r / (Math.abs(speed) || 1), m.width, m.height);
+      const keyTime = (when: number, whens: number[]) => start + (when - base(whens)) / r / (Math.abs(speed) || 1);
+      if (motion.length) clip.transform = motionOf(motion, keyTime, m.width, m.height);
+      for (const eff of others) {
+        const label = kidText(eff, 'name') ?? kidText(eff, 'effectid') ?? 'effect';
+        const params = kids(eff, 'parameter');
+        const scalar = (v: XmlNode | undefined) => (v && !v.children.length && textOf(v) !== '' && Number.isFinite(Number(textOf(v))) ? Number(textOf(v)) : undefined);
+        const reader = (...names: string[]) => {
+          const prm = params.find((x) => names.includes((kidText(x, 'parameterid') ?? '').toLowerCase()) || names.includes((kidText(x, 'name') ?? '').toLowerCase()));
+          return paramValue(prm, scalar, keyTime);
+        };
+        const mapped = mapEffect(label, reader) ?? mapEffect(kidText(eff, 'effectid') ?? '', reader);
+        const where = `${label} effect on ${name}`;
+        if (!mapped) notes.add(where);
+        else {
+          (clip.effects ??= []).push(mapped.effect);
+          if (mapped.approximate) notes.add(`${where} (approximated with fx.${mapped.effect.kind}, check the look)`);
+        }
+      }
     }
   };
 
@@ -258,4 +278,23 @@ function motionOf(effects: XmlNode[], toTime: (when: number, whens: number[]) =>
     }
   }
   return Object.keys(x).length ? x : undefined;
+}
+
+/**
+ * The file of a multiclip's active angle. FCP7 marks it with an `activevideoangle` /
+ * `activeaudioangle` flag on the angle or an angle number on the multiclip; the first angle is
+ * the fallback.
+ */
+function multiclipFile(item: XmlNode, audio: boolean, note: (n: string) => void): XmlNode | undefined {
+  const mc = find(item, 'multiclip');
+  if (!mc) return undefined;
+  let angles = findAll(mc, 'angle').filter((a) => find(a, 'file'));
+  if (!angles.length) angles = kids(mc, 'clip').filter((a) => find(a, 'file'));
+  if (!angles.length) return undefined;
+  const flag = audio ? /^active(audio)?angle$|^activeaudioangle$/i : /^active(video)?angle$|^activevideoangle$/i;
+  const flagged = angles.find((a) => a.children.some((c) => flag.test(c.tag) && /true/i.test(textOf(c))));
+  const index = Number(mc.children.find((c) => flag.test(c.tag))?.text.trim());
+  const active = flagged ?? (index >= 1 ? angles[index - 1] : undefined) ?? angles[0]!;
+  if (angles.length > 1) note(`${angles.length - 1} inactive angle${angles.length > 2 ? 's' : ''} of multicam ${kidText(mc, 'name') ?? kidText(item, 'name') ?? ''} (only the active angle is imported)`);
+  return find(active, 'file');
 }

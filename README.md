@@ -195,9 +195,11 @@ the Messages API, and drive the studio with Playwright. No test needs network ac
 - AI features need credentials on the host (Claude) and a speech-to-text provider (whisper.cpp or a
   plugin). Answers are cached; delete `.tasweerix/cache` or pass a `variant` to regenerate.
 - Timeline import keeps edits, speed (with variable speed ramps and reverse), dissolves, titles,
-  transforms (position, scale, rotation, anchor, opacity and crop, keyframed or not), audio gain and
-  markers. Effects, color corrections and multicam are listed as not imported, and variable-speed
-  clips import without their sound.
+  transforms (position, scale, rotation, anchor, opacity and crop, keyframed or not), effects and
+  color corrections that have an `fx` counterpart, the active angles of multicam clips, audio gain
+  and markers. Color tools are mapped onto `fx.grade` by their parameter names and flagged for a
+  check; effects without a counterpart, inactive multicam angles and the sound of variable-speed
+  clips are listed as not imported.
 
 ## License
 
