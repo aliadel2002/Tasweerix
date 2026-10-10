@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 
 const TEMPLATES: Record<string, string> = {
-  video: `import { composition, rect, text, gradient, keys, textFx, motion, fx } from 'tasweerix';
+  video: `import { composition, rect, text, gradient, keys, textFx, motion } from 'tasweerix';
 
 export default composition({ width: 1920, height: 1080, fps: 30, duration: 6, background: '#0b1020' }, (c) => {
   c.add(rect({ size: [1920, 1080], fill: gradient.angled(35, [1920, 1080], ['#1e1b4b', '#0b1020']) }));
@@ -10,7 +10,6 @@ export default composition({ width: 1920, height: 1080, fps: 30, duration: 6, ba
   c.add(rect({ size: [520, 8], radius: 4, fill: '#22d3ee', at: [960, 640], scale: keys([[0.6, [0, 1]], [1.4, [1, 1], 'outCubic']]) }));
   c.add(motion.particlePresets.fireflies({ seed: 3 }));
   // Add media: c.add(video('assets/clip.mp4', { trim: [0, 3] }).filter(fx.grade({ exposure: 0.2 })));
-  void fx;
 });
 `,
   photo: `import { still, photo, op, mask, fx } from 'tasweerix';

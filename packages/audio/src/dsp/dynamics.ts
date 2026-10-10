@@ -17,11 +17,10 @@ export function compressorGainDb(inputDb: number, threshold: number, ratio: numb
  * Feed-forward compressor with peak/RMS detection, soft knee, makeup and optional sidechain.
  * Params: threshold (dB), ratio, attack (s), release (s), knee (dB), makeup (dB), detector ('peak'|'rms').
  */
-export function compressorProcessor(sampleRate: number, channels: number): AudioProcessor {
+export function compressorProcessor(sampleRate: number, _channels: number): AudioProcessor {
   let env = 0;
   let rmsAcc = 0;
   let gainDbState = 0;
-  void channels;
   return {
     process(chs, off, n, p, side) {
       const threshold = p.threshold ?? -18;
@@ -55,9 +54,8 @@ export function compressorProcessor(sampleRate: number, channels: number): Audio
  * Lookahead brickwall limiter. Params: ceiling (dB), release (s), lookahead (s).
  * Introduces no latency: the gain envelope is computed with a forward-looking window.
  */
-export function limiterProcessor(sampleRate: number, channels: number): AudioProcessor {
+export function limiterProcessor(sampleRate: number, _channels: number): AudioProcessor {
   let gain = 1;
-  void channels;
   return {
     process(chs, off, n, p) {
       const ceiling = dbToLin(p.ceiling ?? -1);
@@ -86,11 +84,10 @@ export function limiterProcessor(sampleRate: number, channels: number): AudioPro
 }
 
 /** Noise gate / downward expander. Params: threshold (dB), range (dB), attack, release, hold. */
-export function gateProcessor(sampleRate: number, channels: number): AudioProcessor {
+export function gateProcessor(sampleRate: number, _channels: number): AudioProcessor {
   let env = 0;
   let g = 0;
   let holdLeft = 0;
-  void channels;
   return {
     process(chs, off, n, p, side) {
       const thr = dbToLin(p.threshold ?? -45);
@@ -123,10 +120,9 @@ export function gateProcessor(sampleRate: number, channels: number): AudioProces
  * Sidechain ducker: lowers the signal by `amount` dB while the sidechain is above `threshold`.
  * Params: amount (dB, negative), threshold (dB), attack, release.
  */
-export function duckProcessor(sampleRate: number, channels: number): AudioProcessor {
+export function duckProcessor(sampleRate: number, _channels: number): AudioProcessor {
   let env = 0;
   let g = 1;
-  void channels;
   return {
     process(chs, off, n, p, side) {
       if (!side) return;

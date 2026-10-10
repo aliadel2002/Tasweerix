@@ -33,8 +33,8 @@ tasweerix studio .                                # live editor with two-way edi
 
 | Area | What you get |
 | --- | --- |
-| **Video editing** | Trims, speed and reverse, time remapping, sequences and overlaps, nested compositions, masks (alpha and luma), blend modes, adjustment layers, motion blur, 13 GPU transitions plus custom GLSL, captions from SRT/VTT, frame-exact decoding. |
-| **Color and effects** | 40+ WebGL2 filters: grade, curves, levels, HSL per range, 3D LUTs (.cube), chroma and luma key, blur family, glow, drop shadow, grain, halftone, glitch, distortions, custom shaders. |
+| **Video editing** | Trims, speed and reverse, time remapping, sequences and overlaps, nested compositions, masks (alpha and luma), blend modes, adjustment layers, motion blur, 14 GPU transitions plus custom GLSL, captions from SRT/VTT, frame-exact decoding. |
+| **Color and effects** | 43 WebGL2 filters: grade, curves, levels, HSL per range, 3D LUTs (.cube), chroma and luma key, blur family, glow, drop shadow, grain, halftone, glitch, distortions, custom shaders. |
 | **Photo editing** | Crop and straighten, Lanczos resize, perspective correction, auto levels and white balance, local adjustments through masks (radial, gradient, color range, luminance, magic wand, brush, polygon), heal and clone, denoise, dehaze, clarity. There is also batch mode. |
 | **Audio** | A pure-TypeScript engine with identical output in Node and the browser. It covers EQ, compressor, limiter, gate, de-esser, reverb (algorithmic and convolution), delay, chorus, phaser, distortion, time-stretch, pitch shift and noise reduction. It also has sidechain ducking, buses, stems, BS.1770 loudness, synth voices and SFX. |
 | **Motion graphics** | Kinetic typography, enter/exit/loop behaviors, path morphing, trim paths, follow-path, repeaters, deterministic particles, animated charts, lower thirds, title cards, callouts and audio-reactive visuals. |
