@@ -43,7 +43,7 @@ tasweerix studio .                                # live editor with two-way edi
 | **Typography** | HarfBuzz shaping and the Unicode bidi algorithm. **Arabic and other RTL or joining scripts animate letter by letter without breaking their joined forms.** Kashida stretching and Arabic-Indic digits are included. |
 | **Smart editing** | Silence jump-cuts, beat detection and beat-synced montages, scene detection, loudness matching and leveling, and auto-ducking. Results are plain cut lists that stay editable as code. |
 | **Studio** | A web editor with live preview, timeline, inspector and code editor. Dragging on the canvas, trimming or moving clips on the timeline, moving keyframes or editing the inspector **rewrites your source code** and keeps its formatting. |
-| **3D** | Real 3D scenes as layers: boxes, spheres, tori, extruded SVG paths, **extruded Arabic and Latin text** shaped by HarfBuzz, glTF/GLB and OBJ models. Metalness/roughness materials, textures (images, live video, any 2D layer), directional lights with soft shadows, point lights, fog, animated cameras with cuts, and After Effects-style 3D layers. Rendered with WebGL2. |
+| **3D** | Real 3D scenes as layers: boxes, spheres, tori, extruded SVG paths, **extruded Arabic and Latin text** shaped by HarfBuzz, glTF/GLB and OBJ models with skeletal animation and morph targets. Metalness/roughness materials, textures (images, live video, any 2D layer), image-based lighting and reflections (built-in studio and sky, or your own .hdr), soft shadows from several directional and point lights, fog, animated cameras with cuts, and After Effects-style 3D layers. Rendered with WebGL2. |
 | **Stabilization and tracking** | Pure-TypeScript computer vision (corner detection, pyramidal optical flow, RANSAC). Smooth or tripod-lock shaky footage with automatic edge cropping, and pin graphics to moving objects with point tracking. |
 | **AI** | Claude writes and reads in your builds: generated titles and copy, structured JSON, image and video-frame descriptions. Speech becomes word-timed captions (translated if you like), transcript-based cuts and chapter markers. The **assistant** edits your project code from a sentence, in the CLI and in the studio. Answers are cached so renders stay deterministic; providers are pluggable. |
 | **Interchange** | Export the edit to **FCPXML** (Final Cut Pro, DaVinci Resolve), **FCP7 XML** (Premiere Pro), **OpenTimelineIO** or **EDL**, and **import** edits from all four as editable TypeScript or at build time. Graphics can optionally be rendered as a ProRes 4444 alpha layer. |
@@ -188,8 +188,10 @@ the Messages API, and drive the studio with Playwright. No test needs network ac
 - The audio DSP is solid but basic next to dedicated tools, and there is no VST/AU hosting.
 - Two-way editing only rewrites values written as literals. Computed values are flagged in the
   inspector and must be edited in code.
-- 3D renders through WebGL2: one shadow-casting light, no image-based lighting or reflections, no
-  skeletal animation or morph targets from glTF files. Without a GPU, exports use SwiftShader.
+- 3D renders through WebGL2 with forward shading. Up to 4 directional and 4 point lights cast
+  shadows. Reflections come from the environment map, so objects do not reflect each other (no
+  screen-space or ray-traced reflections). glTF skinning and morphing run on the CPU, and normal,
+  metallic-roughness and occlusion textures are not imported. Without a GPU, exports use SwiftShader.
 - Stabilization corrects translation, rotation and zoom (a similarity model). It does not correct
   rolling-shutter wobble or perspective changes, and tracking follows points, not planes.
 - AI features need credentials on the host (Claude) and a speech-to-text provider (whisper.cpp or a
