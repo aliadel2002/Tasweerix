@@ -191,7 +191,7 @@ export function browserEnv(assets: BrowserAssets): Env {
       },
     },
     async analyze(kind, src, params) {
-      const r = await fetch(`${assets.server}/__tx/analyze?${new URLSearchParams({ kind, src, params: JSON.stringify(params) })}`);
+      const r = await fetch(`${assets.server}/__tx/analyze`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ kind, src, params }) });
       if (!r.ok) throw new Error(`analysis ${kind} failed: ${await r.text()}`);
       return r.json();
     },

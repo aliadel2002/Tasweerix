@@ -13,7 +13,7 @@ export function nodeEnv(root: string): Env {
       get: async <T,>(key: string, src?: string) => cache.get<T>(key, src ? resolveAsset(root, src) : undefined),
       set: async (key, value, src) => cache.set(key, value, src ? resolveAsset(root, src) : undefined),
     },
-    analyze: (kind, src, params) => hostAnalyze(kind, resolveAsset(root, src), params),
+    analyze: (kind, src, params) => hostAnalyze(kind, resolveAsset(root, src), params, { root, resolve: (s) => resolveAsset(root, s) }),
     kind: 'node',
     probe: (src) => probe(resolveAsset(root, src)),
     loadPcm: (src, rate, ch) => decodePcm(resolveAsset(root, src), rate, ch),

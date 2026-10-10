@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE fcpxml>
+
+<fcpxml version="1.8">
+    <resources>
+        <format id="r1" frameDuration="25/600s" name=""/>
+        <asset name="a" src="file:///media/a.mov" format="r1" id="r2" duration="60/1s" start="0s" hasAudio="0" hasVideo="1"/>
+        <asset name="b" src="file:///media/b.mov" format="r1" id="r3" duration="60/1s" start="0s" hasAudio="0" hasVideo="1"/>
+        <asset name="c" src="file:///media/c.mov" format="r1" id="r4" duration="60/1s" start="0s" hasAudio="0" hasVideo="1"/>
+        <asset name="d" src="file:///media/d.mov" format="r1" id="r5" duration="60/1s" start="0s" hasAudio="0" hasVideo="1"/>
+        <asset name="music" src="file:///media/music.wav" format="r1" id="r6" duration="60/1s" start="0s" hasAudio="1" hasVideo="0"/>
+    </resources>
+    <asset-clip name="a" format="r1" ref="r2" duration="60/1s"/>
+    <asset-clip name="b" format="r1" ref="r3" duration="60/1s"/>
+    <asset-clip name="c" format="r1" ref="r4" duration="60/1s"/>
+    <asset-clip name="d" format="r1" ref="r5" duration="60/1s"/>
+    <asset-clip name="music" format="r1" ref="r6" duration="60/1s"/>
+    <project name="Otio Test" uid="">
+        <sequence duration="15/1s" format="r1">
+            <spine>
+                <clip name="a" offset="0s" duration="4/1s" start="2s">
+                    <video offset="0s" ref="r2" duration="60/1s"/>
+                    <clip name="music" offset="3s" duration="8/1s" start="5s" lane="-1">
+                        <gap name="Gap" offset="0s" duration="60/1s">
+                            <audio offset="0s" ref="r6" duration="60/1s" lane="-1"/>
+                        </gap>
+                    </clip>
+                </clip>
+                <gap name="Gap" duration="1/1s" offset="4s" start="3600s"/>
+                <clip name="b" offset="5s" duration="3/1s" start="10s">
+                    <video offset="0s" ref="r3" duration="60/1s"/>
+                </clip>
+                <clip name="c" offset="8s" duration="5/1s" start="20s">
+                    <video offset="0s" ref="r4" duration="60/1s"/>
+                </clip>
+                <clip name="d" offset="13s" duration="2/1s" start="1s">
+                    <video offset="0s" ref="r5" duration="60/1s"/>
+                </clip>
+            </spine>
+        </sequence>
+    </project>
+</fcpxml>

@@ -17,3 +17,4 @@ export * from './composition';
 export * from './timeline';
 export * from './plugin';
 export * from './path';
+export * from './xml';

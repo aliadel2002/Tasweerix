@@ -1,0 +1,23 @@
+TITLE: Otio Test
+
+001  a        V     C        00:00:02:00 00:00:06:00 00:00:00:00 00:00:04:00
+* FROM CLIP NAME:  a
+* FROM CLIP: file:///media/a.mov
+* OTIO TRUNCATED REEL NAME FROM: a.mov
+002  b        V     C        00:00:10:00 00:00:12:12 00:00:05:00 00:00:07:12
+* FROM CLIP NAME:  b
+* FROM CLIP: file:///media/b.mov
+* OTIO TRUNCATED REEL NAME FROM: b.mov
+003  b        V     C        00:00:12:12 00:00:12:12 00:00:07:12 00:00:07:12
+003  c        V     D 024    00:00:19:12 00:00:25:00 00:00:07:12 00:00:13:00
+* FROM CLIP NAME:  b
+* FROM CLIP: file:///media/b.mov
+* OTIO TRUNCATED REEL NAME FROM: b.mov
+* TO CLIP NAME:  c
+* TO CLIP: file:///media/c.mov
+* OTIO TRUNCATED REEL NAME FROM: c.mov
+004  d        V     C        00:00:01:00 00:00:02:00 00:00:13:00 00:00:15:00
+M2   d		48.0			00:00:01:00
+* FROM CLIP NAME:  d
+* FROM CLIP: file:///media/d.mov
+* OTIO TRUNCATED REEL NAME FROM: d.mov
