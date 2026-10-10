@@ -1,0 +1,256 @@
+import { build } from 'esbuild';
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, watch, writeFileSync } from 'node:fs';
+import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import type { AddressInfo } from 'node:net';
+import { dirname, join, relative, resolve, sep } from 'node:path';
+import { applyEdit, CodemodError, FrameMapper, inlineSourceMap, readProp, type Edit } from '@tasweerix/codemod';
+import { createMediaHandler, resolveAsset, serveStatic, MIME } from '@tasweerix/media/node';
+import { bundle, CLI_ROOT } from './bundle';
+import { render } from './render';
+import { renderAudioForExport } from './audio';
+
+export interface StudioOptions {
+  root: string;
+  entry?: string;
+  port?: number;
+  host?: string;
+  log?: (m: string) => void;
+}
+
+const STUDIO_APP = resolve(CLI_ROOT, '../../apps/studio');
+const IGNORE = /(^|[\\/])(node_modules|\.git|\.tasweerix|out|dist)([\\/]|$)/;
+
+function findEntry(root: string): string {
+  for (const f of ['index.ts', 'main.ts', 'index.tsx', 'composition.ts', 'index.js']) if (existsSync(join(root, f))) return f;
+  const ts = readdirSync(root).find((f) => /\.(ts|tsx|js)$/.test(f));
+  if (!ts) throw new Error(`No entry file found in ${root}`);
+  return ts;
+}
+
+function listFiles(root: string, dir = root, out: { path: string; size: number }[] = []): { path: string; size: number }[] {
+  for (const name of readdirSync(dir)) {
+    const full = join(dir, name);
+    const rel = relative(root, full);
+    if (IGNORE.test(rel) || name.startsWith('.')) continue;
+    const st = statSync(full);
+    if (st.isDirectory()) listFiles(root, full, out);
+    else out.push({ path: rel.split(sep).join('/'), size: st.size });
+  }
+  return out;
+}
+
+async function readBody(req: IncomingMessage): Promise<Buffer> {
+  const chunks: Buffer[] = [];
+  for await (const c of req) chunks.push(c as Buffer);
+  return Buffer.concat(chunks);
+}
+
+const json = (res: ServerResponse, code: number, body: unknown) => res.writeHead(code, { 'content-type': 'application/json' }).end(JSON.stringify(body));
+
+/** Bundles the studio UI (Preact app) with esbuild. */
+async function buildStudioApp(): Promise<{ js: string; css: string }> {
+  const result = await build({
+    entryPoints: [join(STUDIO_APP, 'src/main.tsx')],
+    bundle: true,
+    write: false,
+    format: 'esm',
+    platform: 'browser',
+    target: 'chrome110',
+    jsx: 'automatic',
+    jsxImportSource: 'preact',
+    minify: true,
+    outdir: '/out',
+    logLevel: 'silent',
+    nodePaths: [join(STUDIO_APP, 'node_modules')],
+  });
+  const js = result.outputFiles.find((f) => f.path.endsWith('.js'))!.text;
+  const css = result.outputFiles.find((f) => f.path.endsWith('.css'))?.text ?? '';
+  return { js, css };
+}
+
+/**
+ * Starts the studio: a local web editor for a project with live preview, timeline, inspector,
+ * code editor and two-way editing (canvas / timeline / inspector changes rewrite the source).
+ */
+export async function startStudio(opts: StudioOptions): Promise<{ url: string; close(): Promise<void> }> {
+  const log = opts.log ?? (() => {});
+  const root = resolve(opts.root);
+  let entryRel = opts.entry ? relative(root, resolve(root, opts.entry)) : findEntry(root);
+  const app = await buildStudioApp();
+  const media = createMediaHandler({ root });
+
+  // ---- preview bundle state
+  let version = 0;
+  let preview = { code: '', error: '' as string | null, mapper: undefined as FrameMapper | undefined };
+  // Tasweerix's own sources (monorepo packages) are never "user code", unless the project itself
+  // lives inside that folder (as in tests).
+  const packagesDir = resolve(CLI_ROOT, '..');
+  const isUserFile = (absPath: string) => {
+    const abs = resolve(absPath);
+    if (!abs.startsWith(root + sep) || abs.includes(`${sep}node_modules${sep}`)) return false;
+    if (abs.startsWith(packagesDir + sep) && !root.startsWith(packagesDir + sep)) return false;
+    return true;
+  };
+  const rebuild = async () => {
+    try {
+      const { code } = await bundle({ entry: join(root, entryRel), platform: 'browser', runtime: join(CLI_ROOT, 'src/runtime/preview.ts'), sourcemap: true, outfile: join(root, '__preview.js') });
+      const map = inlineSourceMap(code);
+      // Source map paths are relative to the output dir (= project root).
+      preview = { code, error: null, mapper: map ? new FrameMapper(map, (s) => isUserFile(resolve(root, s))) : undefined };
+    } catch (e) {
+      preview = { ...preview, error: String((e as Error).message ?? e) };
+    }
+    version++;
+    broadcast({ type: 'reload', version, error: preview.error });
+  };
+
+  // ---- events (SSE)
+  const clients = new Set<ServerResponse>();
+  const broadcast = (msg: unknown) => {
+    for (const c of clients) c.write(`data: ${JSON.stringify(msg)}\n\n`);
+  };
+
+  // ---- file history for undo/redo
+  const history: { path: string; before: string; after: string }[] = [];
+  let historyPos = 0;
+  const writeTracked = (path: string, content: string) => {
+    const abs = resolveAsset(root, path);
+    const before = existsSync(abs) ? readFileSync(abs, 'utf8') : '';
+    if (before === content) return;
+    history.splice(historyPos);
+    history.push({ path, before, after: content });
+    historyPos = history.length;
+    mkdirSync(dirname(abs), { recursive: true });
+    writeFileSync(abs, content);
+  };
+
+  // ---- watcher
+  let timer: NodeJS.Timeout | undefined;
+  const watcher = watch(root, { recursive: true }, (_ev, file) => {
+    if (!file || IGNORE.test(String(file)) || String(file).startsWith('__preview')) return;
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      broadcast({ type: 'files', file: String(file).split(sep).join('/') });
+      if (/\.(ts|tsx|js|mjs|json)$/.test(String(file))) void rebuild();
+      else broadcast({ type: 'asset', file: String(file) });
+    }, 80);
+  });
+
+  const server = createServer(async (req, res) => {
+    const url = new URL(req.url ?? '/', 'http://x');
+    const p = url.pathname;
+    try {
+      if (p === '/' || p === '/index.html') {
+        res.writeHead(200, { 'content-type': MIME['.html']! }).end(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Tasweerix Studio</title><link rel="stylesheet" href="/studio.css"></head><body><div id="app"></div><script type="module" src="/studio.js"></script></body></html>`);
+        return;
+      }
+      if (p === '/studio.js') return void res.writeHead(200, { 'content-type': MIME['.js']! }).end(app.js);
+      if (p === '/studio.css') return void res.writeHead(200, { 'content-type': MIME['.css']! }).end(app.css);
+      if (p === '/api/preview.js') {
+        if (preview.error) return void res.writeHead(500, { 'content-type': 'text/plain' }).end(preview.error);
+        return void res.writeHead(200, { 'content-type': MIME['.js']!, 'cache-control': 'no-store' }).end(preview.code);
+      }
+      if (p === '/api/events') {
+        res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store', connection: 'keep-alive' });
+        res.write(`data: ${JSON.stringify({ type: 'hello', version, error: preview.error })}\n\n`);
+        clients.add(res);
+        req.on('close', () => clients.delete(res));
+        return;
+      }
+      if (p === '/api/state') return json(res, 200, { root, entry: entryRel, files: listFiles(root), version, error: preview.error, canUndo: historyPos > 0, canRedo: historyPos < history.length });
+      if (p === '/api/file') {
+        const path = url.searchParams.get('path') ?? entryRel;
+        if (req.method === 'PUT') {
+          writeTracked(path, (await readBody(req)).toString('utf8'));
+          return json(res, 200, { ok: true });
+        }
+        return void res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' }).end(readFileSync(resolveAsset(root, path), 'utf8'));
+      }
+      if (p === '/api/entry' && req.method === 'POST') {
+        entryRel = ((JSON.parse((await readBody(req)).toString()) as { entry: string }).entry);
+        await rebuild();
+        return json(res, 200, { entry: entryRel });
+      }
+      if (p === '/api/upload' && req.method === 'POST') {
+        const path = url.searchParams.get('path') ?? '';
+        const abs = resolveAsset(root, path);
+        mkdirSync(dirname(abs), { recursive: true });
+        writeFileSync(abs, await readBody(req));
+        return json(res, 200, { path });
+      }
+      if (p === '/api/locate' && req.method === 'POST') {
+        const { frames } = JSON.parse((await readBody(req)).toString()) as { frames: string[] };
+        const loc = preview.mapper?.resolve(frames);
+        return json(res, 200, loc ? { ...loc, file: relative(root, resolve(root, loc.file)).split(sep).join('/') } : null);
+      }
+      if (p === '/api/read-prop' && req.method === 'POST') {
+        const { frames, key } = JSON.parse((await readBody(req)).toString()) as { frames: string[]; key: string };
+        const loc = preview.mapper?.resolve(frames);
+        if (!loc) return json(res, 200, { present: false, computed: true });
+        return json(res, 200, readProp(readFileSync(resolve(root, loc.file), 'utf8'), loc.line, loc.column, key));
+      }
+      if (p === '/api/edit' && req.method === 'POST') {
+        const { frames, edit } = JSON.parse((await readBody(req)).toString()) as { frames: string[]; edit: Omit<Edit, 'line' | 'column'> };
+        const loc = preview.mapper?.resolve(frames);
+        if (!loc) return json(res, 409, { error: 'Could not map this element back to source code' });
+        const file = relative(root, resolve(root, loc.file)).split(sep).join('/');
+        const src = readFileSync(resolve(root, file), 'utf8');
+        try {
+          const next = applyEdit(src, { ...edit, line: loc.line, column: loc.column } as Edit);
+          writeTracked(file, next);
+          return json(res, 200, { file, line: loc.line });
+        } catch (e) {
+          return json(res, e instanceof CodemodError ? 409 : 500, { error: (e as Error).message });
+        }
+      }
+      if ((p === '/api/undo' || p === '/api/redo') && req.method === 'POST') {
+        const undo = p === '/api/undo';
+        const step = undo ? history[historyPos - 1] : history[historyPos];
+        if (!step) return json(res, 200, { ok: false });
+        writeFileSync(resolveAsset(root, step.path), undo ? step.before : step.after);
+        historyPos += undo ? -1 : 1;
+        return json(res, 200, { ok: true, path: step.path });
+      }
+      if (p === '/api/export' && req.method === 'POST') {
+        const o = JSON.parse((await readBody(req)).toString()) as { output: string; codec?: string; scale?: number; still?: boolean; frame?: number; comp?: string; concurrency?: number };
+        const output = resolve(root, o.output);
+        json(res, 202, { output: relative(root, output) });
+        broadcast({ type: 'export', state: 'start', output: relative(root, output) });
+        render({
+          entry: join(root, entryRel),
+          root,
+          output,
+          comp: o.comp,
+          codec: o.codec as never,
+          scale: o.scale,
+          still: o.still ? (o.frame ?? 0) : undefined,
+          concurrency: o.concurrency ?? 2,
+          renderAudio: renderAudioForExport,
+          onProgress: (pr) => broadcast({ type: 'export', state: 'progress', ...pr }),
+        })
+          .then((r) => broadcast({ type: 'export', state: 'done', output: relative(root, r.output), seconds: r.seconds }))
+          .catch((e) => broadcast({ type: 'export', state: 'error', error: String((e as Error).message ?? e) }));
+        return;
+      }
+      if (await media(req, res)) return;
+      if (p.startsWith('/project/') && serveStatic(root, req, res, p.slice('/project/'.length))) return;
+      res.writeHead(404).end('not found');
+    } catch (e) {
+      if (!res.headersSent) res.writeHead(500, { 'content-type': 'text/plain' }).end(String((e as Error).stack ?? e));
+    }
+  });
+  await rebuild();
+  await new Promise<void>((r) => server.listen(opts.port ?? 3000, opts.host ?? '127.0.0.1', r));
+  const addr = server.address() as AddressInfo;
+  const url = `http://${addr.address}:${addr.port}`;
+  log(`Tasweerix Studio → ${url}  (project: ${root}, entry: ${entryRel})`);
+  return {
+    url,
+    async close() {
+      watcher.close();
+      for (const c of clients) c.end();
+      media.frames.close();
+      await new Promise<void>((r) => server.close(() => r()));
+    },
+  };
+}

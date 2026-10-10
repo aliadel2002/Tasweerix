@@ -24,7 +24,8 @@
     "@tasweerix/audio": "workspace:*",
     "@tasweerix/illustrate": "workspace:*",
     "@tasweerix/type": "workspace:*",
-    "@tasweerix/smart": "workspace:*"
+    "@tasweerix/smart": "workspace:*",
+    "@tasweerix/codemod": "workspace:*"
   },
   "devDependencies": {
     "@types/ws": "^8.5.13"

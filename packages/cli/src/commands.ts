@@ -147,6 +147,18 @@ export function registerCommands(program: Command): void {
     });
 
   program
+    .command('studio')
+    .description('Open the web studio for a project: live preview, timeline, inspector, code editor, two-way editing')
+    .argument('[dir]', 'project directory', '.')
+    .option('-e, --entry <file>', 'entry file (default: index.ts)')
+    .option('-p, --port <n>', 'port', Number, 3000)
+    .option('--host <host>', 'host to bind', '127.0.0.1')
+    .action(async (dir: string, o) => {
+      const { startStudio } = await import('./studio');
+      await startStudio({ root: dir, entry: o.entry, port: o.port, host: o.host, log: (m) => console.error(m) });
+    });
+
+  program
     .command('inspect')
     .description('Print the composition tree as JSON (timing, props, audio)')
     .argument('<entry>')
