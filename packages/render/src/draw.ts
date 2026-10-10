@@ -13,6 +13,7 @@ import {
   starPoints,
   trimPolylines,
   VideoNode,
+  type MediaTransform,
   type PathData,
   type Rect,
   type ShapeStyle,
@@ -20,6 +21,7 @@ import {
   type Vec2,
 } from '@tasweerix/core';
 import { FONT_FILE_RE } from './assets';
+import { GLSL_PRELUDE } from './gl';
 import { isVisiblePaint, toCanvasPaint } from './paint';
 import { registerDrawer, Renderer, type DrawContext } from './renderer';
 import type { Ctx2D } from './surface';
@@ -161,7 +163,32 @@ registerDrawer('group', (d) => {
 
 // ------------------------------------------------------------ media
 
-export function drawMedia(d: DrawContext, img: CanvasImageSource & { width: number; height: number }, natW: number, natH: number, xf?: [number, number, number, number] | null) {
+/**
+ * Samples the source through an inverse homography (centered coordinates in frame widths): each
+ * output pixel looks up where it came from. Pixels mapping outside the picture stay transparent.
+ */
+const WARP_FRAG = `${GLSL_PRELUDE}
+uniform vec3 uH0;
+uniform vec3 uH1;
+uniform vec3 uH2;
+uniform vec4 uCrop;
+uniform float uAspect;
+void main() {
+  vec3 q = vec3(vUv.x - 0.5, (vUv.y - 0.5) * uAspect, 1.0);
+  vec3 p = vec3(dot(uH0, q), dot(uH1, q), dot(uH2, q));
+  if (p.z <= 0.0) { outColor = vec4(0.0); return; }
+  vec2 uv = vec2(p.x / p.z + 0.5, p.y / p.z / uAspect + 0.5);
+  if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) { outColor = vec4(0.0); return; }
+  outColor = texture(uTex, uCrop.xy + uv * uCrop.zw);
+}`;
+
+/** Inverse of a row-major 3 × 3 matrix (unnormalized: the scale cancels in the projection). */
+function invert3(m: readonly number[]): number[] {
+  const [a, b, c, d, e, f, g, h, i] = m as number[];
+  return [e! * i! - f! * h!, c! * h! - b! * i!, b! * f! - c! * e!, f! * g! - d! * i!, a! * i! - c! * g!, c! * d! - a! * f!, d! * h! - e! * g!, b! * g! - a! * h!, a! * e! - b! * d!];
+}
+
+export function drawMedia(d: DrawContext, img: CanvasImageSource & { width: number; height: number }, natW: number, natH: number, xf?: MediaTransform | null) {
   const crop = d.props.crop as Rect | null;
   const sx = crop?.x ?? 0;
   const sy = crop?.y ?? 0;
@@ -183,14 +210,36 @@ export function drawMedia(d: DrawContext, img: CanvasImageSource & { width: numb
     else d.ctx.rect(-size[0] / 2 + fit.x, -size[1] / 2 + fit.y, fit.width, fit.height);
     d.ctx.clip();
   }
+  const dx = -size[0] / 2 + fit.x;
+  const dy = -size[1] / 2 + fit.y;
+  // A homography with perspective terms cannot be expressed as a 2D canvas transform: warp on the GPU.
+  if (xf?.length === 9 && (Math.abs(xf[6]) > 1e-9 || Math.abs(xf[7]) > 1e-9)) {
+    const gl = d.renderer.gl;
+    const src = gl.upload(img as TexImageSource);
+    const w = Math.max(1, Math.round(sw * kx));
+    const h = Math.max(1, Math.round(sh * ky));
+    const inv = invert3(xf);
+    const out = gl.run(WARP_FRAG, { uTex: src, uH0: inv.slice(0, 3), uH1: inv.slice(3, 6), uH2: inv.slice(6, 9), uCrop: [(sx * kx) / img.width, (sy * ky) / img.height, (sw * kx) / img.width, (sh * ky) / img.height], uAspect: sh / sw }, gl.target(w, h));
+    const warped = gl.output(out);
+    d.ctx.drawImage(warped, 0, 0, w, h, dx, dy, fit.width, fit.height);
+    warped.close?.();
+    gl.release(src);
+    gl.release(out);
+    if (clip) d.ctx.restore();
+    return;
+  }
   if (xf) {
-    const cx = -size[0] / 2 + fit.x + fit.width / 2;
-    const cy = -size[1] / 2 + fit.y + fit.height / 2;
+    const cx = dx + fit.width / 2;
+    const cy = dy + fit.height / 2;
     d.ctx.translate(cx, cy);
-    d.ctx.transform(xf[0], xf[1], -xf[1], xf[0], xf[2] * fit.width, xf[3] * fit.width);
+    if (xf.length === 9) {
+      const k = 1 / xf[8];
+      d.ctx.transform(xf[0] * k, xf[3] * k, xf[1] * k, xf[4] * k, xf[2] * k * fit.width, xf[5] * k * fit.width);
+    }
+    else d.ctx.transform(xf[0], xf[1], -xf[1], xf[0], xf[2] * fit.width, xf[3] * fit.width);
     d.ctx.translate(-cx, -cy);
   }
-  d.ctx.drawImage(img, sx * kx, sy * ky, sw * kx, sh * ky, -size[0] / 2 + fit.x, -size[1] / 2 + fit.y, fit.width, fit.height);
+  d.ctx.drawImage(img, sx * kx, sy * ky, sw * kx, sh * ky, dx, dy, fit.width, fit.height);
   if (clip) d.ctx.restore();
 }
 

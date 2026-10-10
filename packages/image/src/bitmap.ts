@@ -1,4 +1,7 @@
-/** Straight-alpha float RGBA image (0..1, sRGB-encoded). */
+/**
+ * Straight-alpha float RGBA image (sRGB-encoded). Color is nominally 0..1 but may exceed 1 between ops
+ * (highlight headroom); alpha stays 0..1. `toRGBA8` clips at the output edge.
+ */
 export interface Bitmap {
   width: number;
   height: number;

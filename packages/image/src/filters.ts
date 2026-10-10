@@ -55,7 +55,7 @@ export function unsharp(b: Bitmap, p: { radius?: number; amount?: number; thresh
   for (let i = 0; i < out.data.length; i += 4)
     for (let c = 0; c < 3; c++) {
       const d = b.data[i + c]! - bl.data[i + c]!;
-      if (Math.abs(d) >= thr) out.data[i + c] = Math.min(1, Math.max(0, b.data[i + c]! + d * amt));
+      if (Math.abs(d) >= thr) out.data[i + c] = Math.max(0, b.data[i + c]! + d * amt);
     }
   return mask ? blendMask(b, out, mask) : out;
 }
@@ -67,8 +67,8 @@ export function clarity(b: Bitmap, amount = 0.3, mask?: Mask): Bitmap {
   const out = cloneBitmap(b);
   for (let i = 0; i < out.data.length; i += 4) {
     const l = luma(b.data[i]!, b.data[i + 1]!, b.data[i + 2]!);
-    const mid = 1 - Math.pow(2 * l - 1, 2);
-    for (let c = 0; c < 3; c++) out.data[i + c] = Math.min(1, Math.max(0, b.data[i + c]! + (b.data[i + c]! - bl.data[i + c]!) * amount * mid * 1.5));
+    const mid = 1 - Math.pow(2 * Math.min(1, l) - 1, 2);
+    for (let c = 0; c < 3; c++) out.data[i + c] = Math.max(0, b.data[i + c]! + (b.data[i + c]! - bl.data[i + c]!) * amount * mid * 1.5);
   }
   return mask ? blendMask(b, out, mask) : out;
 }
@@ -103,7 +103,7 @@ export function dehaze(b: Bitmap, amount = 0.5): Bitmap {
   const out = cloneBitmap(b);
   for (let i = 0; i < w * h; i++) {
     const tt = Math.max(0.1, t[i]!);
-    for (let c = 0; c < 3; c++) out.data[i * 4 + c] = Math.min(1, Math.max(0, (data[i * 4 + c]! - A[c]!) / tt + A[c]!));
+    for (let c = 0; c < 3; c++) out.data[i * 4 + c] = Math.max(0, (data[i * 4 + c]! - A[c]!) / tt + A[c]!);
   }
   return out;
 }

@@ -72,7 +72,7 @@ export function heal(b: Bitmap, p: PatchOptions): Bitmap {
         // Destination base: low-pass of the surroundings excluding the blemish, approximated by the
         // ring average at the patch edge.
         const base = ringAverage(low, w, h, p.to[0] - x0, p.to[1] - y0, r, c);
-        const v = Math.min(1, Math.max(0, base + detail));
+        const v = Math.max(0, base + detail);
         out.data[i + c] = out.data[i + c]! + (v - out.data[i + c]!) * wgt;
       }
     }

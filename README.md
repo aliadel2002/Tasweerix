@@ -188,12 +188,11 @@ the Messages API, and drive the studio with Playwright. No test needs network ac
 - The audio DSP is solid but basic next to dedicated tools, and there is no VST/AU hosting.
 - Two-way editing only rewrites values written as literals. Computed values are flagged in the
   inspector and must be edited in code.
-- 3D renders through WebGL2 with forward shading. Up to 4 directional and 4 point lights cast
-  shadows. Reflections come from the environment map, so objects do not reflect each other (no
-  screen-space or ray-traced reflections). glTF skinning and morphing run on the CPU, and normal,
-  metallic-roughness and occlusion textures are not imported. Without a GPU, exports use SwiftShader.
-- Stabilization corrects translation, rotation and zoom (a similarity model). It does not correct
-  rolling-shutter wobble or perspective changes, and tracking follows points, not planes.
+- 3D renders through WebGL2: one shadow-casting light, no image-based lighting or reflections, no
+  skeletal animation or morph targets from glTF files. Without a GPU, exports use SwiftShader.
+- Stabilization corrects translation, rotation and zoom, and with `model: 'perspective'` also
+  perspective (keystone) changes. It does not correct rolling-shutter wobble, and tracking follows
+  points, not planes.
 - AI features need credentials on the host (Claude) and a speech-to-text provider (whisper.cpp or a
   plugin). Answers are cached; delete `.tasweerix/cache` or pass a `variant` to regenerate.
 - Timeline import keeps edits, speed, dissolves, titles, audio gain and markers. Effects, transforms,
