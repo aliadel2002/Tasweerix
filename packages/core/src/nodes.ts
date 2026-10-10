@@ -290,11 +290,17 @@ export interface ImageProps {
   /** Crop rectangle in source pixels. */
   crop: Rect | null;
   smoothing: boolean;
+  /**
+   * Corner pin: where the picture's corners (top-left, top-right, bottom-right, bottom-left) go, in
+   * the node's local coordinates. The picture is warped in perspective onto that quad (`size` and
+   * `fit` no longer apply). Animate it with keys, or drive it with a tracked plane (`pinToPlane`).
+   */
+  cornerPin: [Vec2, Vec2, Vec2, Vec2] | null;
 }
 export class ImageNode extends SceneNode<ImageProps> {
   info?: MediaInfo;
   override defaults() {
-    return { src: '', size: null, fit: 'contain' as Fit, crop: null, smoothing: true };
+    return { src: '', size: null, fit: 'contain' as Fit, crop: null, smoothing: true, cornerPin: null };
   }
   override async prepare(env: Env): Promise<void> {
     const src = this.props.src;
@@ -345,7 +351,7 @@ export class VideoNode extends SceneNode<VideoProps> {
    */
   mediaTransform?: (sourceTime: number) => MediaTransform | null | undefined;
   override defaults() {
-    return { src: '', size: null, fit: 'contain' as Fit, crop: null, smoothing: true, volume: 1 };
+    return { src: '', size: null, fit: 'contain' as Fit, crop: null, smoothing: true, cornerPin: null, volume: 1 };
   }
   get src(): string {
     return this.props.src as string;

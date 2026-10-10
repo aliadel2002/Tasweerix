@@ -70,6 +70,30 @@ c.add(v);
 that video: it maps source pixels through trim, size, fit and stabilization. `trackToKeys(track)`
 gives the path as editable keyframes.
 
+## Track a plane
+
+```ts
+const v = video('desk.mp4');
+const screen = await trackPlane('desk.mp4', { corners: [[410, 220], [880, 250], [870, 560], [400, 520]], time: 1 });
+v.add(image('ui.png', { cornerPin: pinToPlane(v, screen) }));      // replace the screen's content
+v.add(text('Live', { at: follow(v, planePoint(screen, [640, 240])) })); // a point of the plane
+c.add(v);
+```
+
+`trackPlane` follows a flat surface (a screen, a sign, a wall, a table top) from its four corners
+(top-left, top-right, bottom-right, bottom-left, in source pixels at source time `time`). Features
+inside the quad are tracked frame to frame and fitted with a RANSAC homography, so the plane keeps
+its perspective as the camera moves around it. Each estimate is then refined against the reference
+frame (the new frame is warped back into the reference geometry and the reference features are
+tracked into it), so errors do not accumulate into drift. Frames where the plane cannot be followed
+are marked `lost` and hold the last position.
+
+Images and videos have a `cornerPin` prop: four points (tl, tr, br, bl) in the node's local
+coordinates where the picture's corners go. It can be keyframed by hand; `pinToPlane(video, track)`
+drives it from a tracked plane, mapping through the video's trim, fit and stabilization (pass a quad
+in reference-frame pixels to pin to part of the plane). `planePoint(track, point)` turns a point of
+the plane into a point track for `follow()`.
+
 ## CLI
 
 ```sh
@@ -79,6 +103,7 @@ tasweerix stabilize drone.mp4 --model perspective      # also removes keystone w
 tasweerix stabilize phone.mp4 --rolling-shutter auto   # also removes skew and jello
 tasweerix stabilize handheld.mp4 --analyze             # just measure the shake
 tasweerix track street.mp4 --at 812,440 --time 3       # prints keys([...]) you can paste
+tasweerix track desk.mp4 --corners 410,220,880,250,870,560,400,520 --time 1   # a plane's corners
 ```
 
 Analysis runs at about 30 ms per frame at the default resolution and is cached afterwards.
