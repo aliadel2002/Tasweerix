@@ -62,6 +62,23 @@ pnpm tasweerix render my-video/index.ts -o my-video/out/video.mp4
 ```
 
 Inside this repository, `pnpm tasweerix <command>` runs the CLI from source. No build step is needed.
+`pnpm tasweerix doctor` checks that FFmpeg, Chromium and the optional tools are in place.
+
+## Claude Code plugin
+
+The [Tasweerix plugin](claude-plugin) for [Claude Code](https://claude.com/claude-code) lets you describe a
+video, photo edit, soundtrack or 3D title and have Claude write the scene, render frames to check how
+they look, and export the result.
+
+```
+/plugin install tasweerix --marketplace aliadel2002/Tasweerix
+```
+
+On Claude Code before 2.1.275, run `/plugin marketplace add aliadel2002/Tasweerix` and then
+`/plugin install tasweerix@tasweerix`. It adds API skills, the commands `/tasweerix:new`, `render`,
+`preview`, `doctor`, `stabilize`, `cut`, `import` and `studio`, and an MCP server
+([`@tasweerix/mcp`](packages/mcp)) that renders stills Claude can look at. See
+[claude-plugin/README.md](claude-plugin/README.md).
 
 ## CLI
 
@@ -82,6 +99,7 @@ Inside this repository, `pnpm tasweerix <command>` runs the CLI from source. No 
 | `ai "<request>"` | Ask the assistant to edit the project's code (`--dry-run` shows a diff). |
 | `transcribe <file>` | Speech to `.srt`/`.vtt`/`.json`, optionally `--translate <language>`. |
 | `inspect <entry>` | Print the composition tree as JSON. |
+| `doctor` | Check FFmpeg, Chromium and the optional tools (LibRaw, whisper.cpp, AI credentials, audio plugin hosts) and say how to fix what's missing. |
 | `probe <file>` | Show media info. |
 | `init [dir] -t <template>` | Scaffold a project. |
 
@@ -164,6 +182,7 @@ other examples), so pass `--root .` for them.
 | `@tasweerix/codemod` | GUI edits turned into source code edits. |
 | `@tasweerix/interchange` | FCPXML, OTIO, FCP7 XML and EDL import and export. |
 | `@tasweerix/cli` | The `tasweerix` command, export pipeline and studio server. |
+| `@tasweerix/mcp` | MCP server for Claude Code and other MCP clients: inspect, render stills to look at, render video and audio, probe and analyze media, read the docs. |
 | `apps/studio` | Studio UI (Preact and CodeMirror 6). |
 
 ## Development

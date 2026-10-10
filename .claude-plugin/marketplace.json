@@ -1,0 +1,19 @@
+{
+  "name": "tasweerix",
+  "owner": {
+    "name": "aliadel2002",
+    "url": "https://github.com/aliadel2002"
+  },
+  "metadata": {
+    "description": "Claude Code plugins for Tasweerix, the code-first media engine."
+  },
+  "plugins": [
+    {
+      "name": "tasweerix",
+      "source": "./claude-plugin",
+      "description": "Make videos, photos, audio, motion graphics and 3D with Tasweerix by describing them: API skills, slash commands and an MCP server that renders frames Claude can look at.",
+      "version": "0.1.0",
+      "category": "media"
+    }
+  ]
+}

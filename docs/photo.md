@@ -15,7 +15,7 @@ export default still({ width: 1600, height: 1067 }, (c) => {
       op.heal({ from: [520, 300], to: [560, 310], radius: 14 }),
       op.adjust({ exposure: -0.4, saturation: 0.2 }, { mask: mask.linear([800, 0], [800, 400]) }),   // graduated sky
       op.adjust({ shadows: 0.4 }, { mask: mask.luminance(0, 0.35) }),                               // lift shadows only
-      op.hsl({ range: 'blues', saturation: 0.3 }),
+      op.hsl({ range: 220, saturation: 0.3 }),                                                     // blues (a hue in degrees)
       op.clarity(0.2),
       op.sharpen({ amount: 0.5 }),
     ], { size: [1600, 1067], fit: 'cover' }),

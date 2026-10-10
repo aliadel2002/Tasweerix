@@ -1,0 +1,44 @@
+{
+  "name": "@tasweerix/mcp",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Tasweerix MCP server: lets Claude Code and other MCP clients inspect compositions, render stills it can look at, render video and audio, probe and analyze media, and read the Tasweerix docs.",
+  "license": "MIT",
+  "bin": {
+    "tasweerix-mcp": "./bin/tasweerix-mcp.mjs"
+  },
+  "main": "./src/server.ts",
+  "exports": {
+    ".": "./src/server.ts",
+    "./package.json": "./package.json"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.1",
+    "@tasweerix/ai": "workspace:*",
+    "@tasweerix/cli": "workspace:*",
+    "tsx": "^4.19.2",
+    "zod": "^4.6.5"
+  },
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "bin": {
+      "tasweerix-mcp": "./dist/main.js"
+    },
+    "main": "./dist/server.js",
+    "types": "./dist/server.d.ts",
+    "exports": {
+      ".": {
+        "types": "./dist/server.d.ts",
+        "default": "./dist/server.js"
+      },
+      "./package.json": "./package.json"
+    }
+  },
+  "scripts": {
+    "build": "tsup",
+    "prepublishOnly": "pnpm run build"
+  }
+}

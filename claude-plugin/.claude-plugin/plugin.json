@@ -1,0 +1,13 @@
+{
+  "name": "tasweerix",
+  "version": "0.1.0",
+  "description": "Make videos, photos, audio, motion graphics and 3D with Tasweerix by describing them: API skills, slash commands for creating, previewing and rendering projects, and an MCP server that lets Claude render frames and look at them.",
+  "author": {
+    "name": "aliadel2002",
+    "url": "https://github.com/aliadel2002"
+  },
+  "homepage": "https://github.com/aliadel2002/Tasweerix/tree/main/claude-plugin",
+  "repository": "https://github.com/aliadel2002/Tasweerix",
+  "license": "MIT",
+  "keywords": ["video", "motion-graphics", "photo-editing", "audio", "3d", "arabic", "rendering"]
+}
