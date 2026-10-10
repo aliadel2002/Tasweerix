@@ -8,7 +8,9 @@ import { gray, type Gray } from './image';
 import { MotionEstimator, type MotionData } from './motion';
 import { estimateReadout, shakeStats } from './stabilize';
 import { trackPointInFrames, type PointTrack } from './track';
-import { analyzeMotion, ANALYSIS_WIDTH, trackPoint } from './index';
+import { hscale } from './homography';
+import { trackPlaneInFrames, type PlaneTrack, type Quad } from './plane';
+import { analyzeMotion, ANALYSIS_WIDTH, trackPlane, trackPoint } from './index';
 
 export interface GrayStreamOptions {
   /** Output width (height follows the aspect ratio, rounded to even). */
@@ -92,6 +94,42 @@ export async function trackAnalysis(file: string, params: Record<string, unknown
   return { version: 1, width: srcW, height: srcH, fps: meta.fps, start: meta.start, points: r.points.map((p) => [+(p[0] / k).toFixed(2), +(p[1] / k).toFixed(2)] as Vec2), lost: r.lost };
 }
 
+/** Host analysis: a tracked plane (see `trackPlane`). */
+export async function planeAnalysis(file: string, params: Record<string, unknown>): Promise<PlaneTrack> {
+  const info = await probe(file);
+  const srcW = info.width ?? 1;
+  const srcH = info.height ?? 1;
+  const time = Number(params.time ?? 0);
+  const from = Math.max(0, Math.min(time, Number(params.from ?? Math.max(0, time - 2.5))));
+  const to = info.duration !== undefined ? Math.min(info.duration, Number(params.to ?? time + 2.5)) : Number(params.to ?? time + 2.5);
+  const frames: Gray[] = [];
+  const meta = await streamGrayFrames(file, { width: Number(params.width ?? ANALYSIS_WIDTH), from, to }, (f, _i, info) => {
+    if (frames.length < 20000) frames.push(gray(info.width, info.height, f));
+  });
+  if (!frames.length) throw new Error(`No frames decoded from ${file}`);
+  const k = meta.width / srcW;
+  const at = Math.min(frames.length - 1, Math.max(0, Math.round((time - meta.start) * meta.fps)));
+  const corners = (params.corners as Quad).map((p) => [Number(p[0]) * k, Number(p[1]) * k]) as Quad;
+  const r = trackPlaneInFrames(frames, at, corners);
+  // Analysis pixels → source pixels.
+  const homographies = r.homographies.map((h) => hscale(h, k).map((x) => +x.toPrecision(9)) as typeof h);
+  const src = params.corners as Quad;
+  return {
+    version: 1,
+    width: srcW,
+    height: srcH,
+    fps: meta.fps,
+    start: meta.start,
+    time,
+    corners: homographies.map((h) => src.map((p) => {
+      const w = h[6] * p[0] + h[7] * p[1] + h[8];
+      return [+((h[0] * p[0] + h[1] * p[1] + h[2]) / w).toFixed(2), +((h[3] * p[0] + h[4] * p[1] + h[5]) / w).toFixed(2)] as Vec2;
+    }) as Quad),
+    homographies,
+    lost: r.lost,
+  };
+}
+
 const num = (v: unknown, d?: number) => (v === undefined || v === null || v === '' ? d : Number(v));
 
 /** Stabilization and tracking: host analyses plus the `stabilize` and `track` commands. */
@@ -100,6 +138,7 @@ export const visionPlugin: Plugin = definePlugin({
   analyses: {
     'vision.motion': motionAnalysis,
     'vision.track': trackAnalysis,
+    'vision.plane': planeAnalysis,
   },
   commands: {
     stabilize: {
@@ -150,10 +189,11 @@ export const visionPlugin: Plugin = definePlugin({
       },
     },
     track: {
-      description: 'Track a point of a video and print it as keyframes (source time → source pixels)',
+      description: 'Track a point (--at) or a flat surface (--corners) of a video and print it as keyframes (source time → source pixels)',
       args: ['<file>'],
       options: [
         { flags: '--at <x,y>', description: 'point to follow, in source pixels' },
+        { flags: '--corners <x,y,...>', description: 'plane to follow: four corners (tl, tr, br, bl) in source pixels' },
         { flags: '--time <s>', description: 'source time where the point is right', default: '0' },
         { flags: '--from <s>', description: 'start of the tracked range' },
         { flags: '--to <s>', description: 'end of the tracked range' },
@@ -164,7 +204,22 @@ export const visionPlugin: Plugin = definePlugin({
       async run(ctx: CommandContext) {
         const file = resolve(ctx.cwd, ctx.args[0]!);
         const o = ctx.options;
-        if (!o.at) throw new Error('track: pass --at x,y');
+        if (o.corners) {
+          const v = String(o.corners).split(',').map(Number);
+          if (v.length !== 8 || v.some((x) => !Number.isFinite(x))) throw new Error('track: --corners needs 8 numbers (x,y for tl, tr, br, bl)');
+          const corners = [0, 2, 4, 6].map((i) => [v[i]!, v[i + 1]!]) as Quad;
+          const pl = await trackPlane(basename(file), { corners, time: num(o.time, 0)!, from: num(o.from), to: num(o.to) }, nodeEnv(dirname(file)));
+          if (o.json) {
+            console.log(JSON.stringify(pl));
+            return pl;
+          }
+          const every = Math.max(1, num(o.every, 1)!);
+          const lines: string[] = [];
+          for (let i = 0; i < pl.corners.length; i += every) lines.push(`  [${+(pl.start + i / pl.fps).toFixed(4)}, ${JSON.stringify(pl.corners[i])}],${pl.lost[i] ? ' // lost' : ''}`);
+          console.log(`// ${basename(file)}: plane at ${o.time}s, source time → corners (tl, tr, br, bl) in source pixels\nconst plane = keys([\n${lines.join('\n')}\n]);`);
+          return pl;
+        }
+        if (!o.at) throw new Error('track: pass --at x,y or --corners x,y,...');
         const at = String(o.at).split(',').map(Number) as Vec2;
         const tr = await trackPoint(basename(file), { at, time: num(o.time, 0)!, from: num(o.from), to: num(o.to), radius: num(o.radius) }, nodeEnv(dirname(file)));
         if (o.json) {

@@ -44,7 +44,7 @@ tasweerix studio .                                # live editor with two-way edi
 | **Smart editing** | Silence jump-cuts, beat detection and beat-synced montages, scene detection, loudness matching and leveling, and auto-ducking. Results are plain cut lists that stay editable as code. |
 | **Studio** | A web editor with live preview, timeline, inspector and code editor. Dragging on the canvas, trimming or moving clips on the timeline, moving keyframes or editing the inspector **rewrites your source code** and keeps its formatting. |
 | **3D** | Real 3D scenes as layers: boxes, spheres, tori, extruded SVG paths, **extruded Arabic and Latin text** shaped by HarfBuzz, glTF/GLB and OBJ models with skeletal animation and morph targets. Metalness/roughness materials, textures (images, live video, any 2D layer), image-based lighting and reflections (built-in studio and sky, or your own .hdr), soft shadows from several directional and point lights, fog, animated cameras with cuts, and After Effects-style 3D layers. Rendered with WebGL2. |
-| **Stabilization and tracking** | Pure-TypeScript computer vision (corner detection, pyramidal optical flow, RANSAC). Smooth or tripod-lock shaky footage with automatic edge cropping, and pin graphics to moving objects with point tracking. |
+| **Stabilization and tracking** | Pure-TypeScript computer vision (corner detection, pyramidal optical flow, RANSAC). Smooth or tripod-lock shaky footage with automatic edge cropping (perspective and rolling-shutter aware), pin graphics to moving objects with point tracking, and corner-pin pictures onto tracked planes. |
 | **AI** | Claude writes and reads in your builds: generated titles and copy, structured JSON, image and video-frame descriptions. Speech becomes word-timed captions (translated if you like), transcript-based cuts and chapter markers. The **assistant** edits your project code from a sentence, in the CLI and in the studio. Answers are cached so renders stay deterministic; providers are pluggable. |
 | **Interchange** | Export the edit to **FCPXML** (Final Cut Pro, DaVinci Resolve), **FCP7 XML** (Premiere Pro), **OpenTimelineIO** or **EDL**, and **import** edits from all four as editable TypeScript or at build time. Graphics can optionally be rendered as a ProRes 4444 alpha layer. |
 
@@ -192,8 +192,8 @@ the Messages API, and drive the studio with Playwright. No test needs network ac
   skeletal animation or morph targets from glTF files. Without a GPU, exports use SwiftShader.
 - Stabilization corrects translation, rotation and zoom, perspective (keystone) changes with
   `model: 'perspective'`, and rolling-shutter skew and wobble with `rollingShutter`. Vibration faster
-  than about half the frame rate cannot be recovered from frame-to-frame motion, and tracking follows
-  points, not planes.
+  than about half the frame rate cannot be recovered from frame-to-frame motion. Planar tracking needs
+  the plane textured and mostly visible; occluders are tolerated but not masked.
 - AI features need credentials on the host (Claude) and a speech-to-text provider (whisper.cpp or a
   plugin). Answers are cached; delete `.tasweerix/cache` or pass a `variant` to regenerate.
 - Timeline import keeps edits, speed (with variable speed ramps and reverse), dissolves, titles,

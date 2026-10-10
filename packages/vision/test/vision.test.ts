@@ -2,10 +2,10 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { usePlugin, video } from '@tasweerix/core';
+import { createRandom, usePlugin, video } from '@tasweerix/core';
 import { nodeEnv } from '@tasweerix/media/node';
 import { closeTestBrowser, renderFrames } from '../../cli/src/testing';
-import { analyzeMotion, applyMediaTransform, estimateReadout, fitSimilarityShear, rowShifts, follow, pointAt, computeStabilization, correctionAt, decompose, fitSimilarity, goodFeatures, gray, invert, compose, apply, ransacSimilarity, stabilize, trackPoint, zoomToCover, fitHomography, ransacHomography, happly, hcompose, hinvert, hscale, fromSimilarity, H_IDENTITY, type Homography, type MotionData, type Similarity } from '../src';
+import { trackPlane, pinToPlane, planePoint, planeCornersAt, type Quad, analyzeMotion, applyMediaTransform, estimateReadout, fitSimilarityShear, rowShifts, follow, pointAt, computeStabilization, correctionAt, decompose, fitSimilarity, goodFeatures, gray, invert, compose, apply, ransacSimilarity, stabilize, trackPoint, zoomToCover, fitHomography, ransacHomography, happly, hcompose, hinvert, hscale, fromSimilarity, H_IDENTITY, type Homography, type MotionData, type Similarity } from '../src';
 import { visionPlugin } from '../src/node';
 
 const dir = join(__dirname, '.tmp');
@@ -19,6 +19,19 @@ const jy = (n: number) => Math.round(100 + 14 * Math.cos(n * 1.1));
 const RS_READOUT = 0.8;
 const rsx = (t: number) => 150 + 20 * Math.sin(t * 0.5) + 6 * Math.sin(t * 1.2);
 const rsy = (t: number) => 90 + 14 * Math.cos(t * 0.7);
+// Planar footage: a textured card seen in changing perspective over a slowly panning background.
+const planeQuad = (n: number): Quad => {
+  const cx = 110 + n * 1.6;
+  const cy = 95 + 12 * Math.sin(n * 0.12);
+  const k = 0.25 * Math.sin(n * 0.09); // the card turns: its left and right edges change height
+  const w = 60 + 8 * Math.cos(n * 0.07);
+  return [
+    [cx - w, cy - 42 * (1 + k) + 0.15 * n],
+    [cx + w, cy - 42 * (1 - k)],
+    [cx + w + 6 * Math.sin(n * 0.1), cy + 42 * (1 - k)],
+    [cx - w, cy + 42 * (1 + k) - 0.1 * n],
+  ];
+};
 
 beforeAll(() => {
   usePlugin(visionPlugin);
@@ -55,6 +68,33 @@ beforeAll(() => {
     }
   }
   execFileSync('ffmpeg', ['-y', '-v', 'error', '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-s', '320x200', '-r', '30', '-i', '-', '-pix_fmt', 'yuv444p', '-c:v', 'libx264', '-qp', '0', join(dir, 'rolling.mp4')], { input: rsFrames });
+  {
+    // Card texture: random 8 px blocks (plenty of corners).
+    const rnd = createRandom(3);
+    const tex = Array.from({ length: 16 * 16 }, () => Math.round(rnd() * 255));
+    const unit: [number, number][] = [[0, 0], [1, 0], [1, 1], [0, 1]];
+    const buf = Buffer.alloc(60 * 320 * 200 * 3);
+    for (let n = 0; n < 60; n++) {
+      const inv = hinvert(fitHomography(unit, planeQuad(n))!);
+      for (let y = 0; y < 200; y++) {
+        for (let x = 0; x < 320; x++) {
+          const [u, v] = happly(inv, [x + 0.5, y + 0.5]);
+          const o = ((n * 200 + y) * 320 + x) * 3;
+          if (u >= 0 && u < 1 && v >= 0 && v < 1) {
+            const t = tex[Math.floor(v * 16) * 16 + Math.floor(u * 16)]!;
+            buf[o] = t;
+            buf[o + 1] = 255 - t;
+            buf[o + 2] = (t * 3) % 256;
+          } else {
+            const sx = Math.min(639, x + 100 + Math.round(n * 0.5));
+            for (let ch = 0; ch < 3; ch++) buf[o + ch] = still[((y + 100) * 640 + sx) * 3 + ch]!;
+          }
+        }
+      }
+    }
+    execFileSync('ffmpeg', ['-y', '-v', 'error', '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-s', '320x200', '-r', '30', '-i', '-', '-pix_fmt', 'yuv444p', '-c:v', 'libx264', '-qp', '0', join(dir, 'plane.mp4')], { input: buf });
+    ff('-f', 'lavfi', '-i', 'color=c=red:s=64x48', '-frames:v', '1', join(dir, 'red.png'));
+  }
   // A textured patch moving over a plain background.
   ff('-f', 'lavfi', '-i', 'color=c=0x404040:s=320x200:d=2:r=30', '-i', join(dir, 'still.png'), '-filter_complex', `[1]crop=40:40:420:260[p];[0][p]overlay=x='40+t*60':y='80+20*sin(t*3)'`, '-t', '2', '-pix_fmt', 'yuv444p', '-c:v', 'libx264', '-qp', '0', join(dir, 'moving.mp4'));
 });
@@ -381,6 +421,58 @@ export default composition({ width: 320, height: 200, fps: 30, duration: 2, back
   });
 });
 
+describe('planar tracking', () => {
+  it('follows a plane in perspective and pins a picture to it', async () => {
+    const pl = await trackPlane('plane.mp4', { corners: planeQuad(0), time: 0, from: 0, to: 2 }, env);
+    expect(pl.corners).toHaveLength(60);
+    expect(pl.lost.filter(Boolean)).toHaveLength(0);
+    let worst = 0;
+    pl.corners.forEach((q, n) => q.forEach((p, c) => (worst = Math.max(worst, Math.hypot(p[0] - planeQuad(n)[c]![0], p[1] - planeQuad(n)[c]![1])))));
+    // Under 2.5 px everywhere (the frame-to-frame estimate is refined against the reference frame, so it does not drift).
+    expect(worst).toBeLessThan(2.5);
+    // Tracking from a later reference frame works backwards too.
+    const back = await trackPlane('plane.mp4', { corners: planeQuad(45), time: 1.5, from: 0, to: 2 }, env);
+    back.corners[5]!.forEach((p, c) => expect(Math.hypot(p[0] - planeQuad(5)[c]![0], p[1] - planeQuad(5)[c]![1])).toBeLessThan(2.5));
+    // Any point of the plane follows it (here the card's center at frame 0 → its center later).
+    const mid = (q: Quad): [number, number] => happly(fitHomography([[0, 0], [1, 0], [1, 1], [0, 1]], q)!, [0.5, 0.5]);
+    const c = planePoint(pl, mid(planeQuad(0)));
+    const p40 = c.points[40]!;
+    expect(Math.hypot(p40[0] - mid(planeQuad(40))[0], p40[1] - mid(planeQuad(40))[1])).toBeLessThan(1.5);
+    expect(planeCornersAt(pl, 40 / 30)).toEqual(pl.corners[40]);
+    // pinToPlane maps the corners into the video's box (here shown at 2×, centered).
+    const v = video('plane.mp4', { size: [640, 400] });
+    await v.prepare(env);
+    const q = pinToPlane(v, pl)({ time: 40 / 30 } as never);
+    expect(q[0][0]).toBeCloseTo(-320 + pl.corners[40]![0]![0] * 2, 6);
+    expect(q[2][1]).toBeCloseTo(-200 + pl.corners[40]![2]![1] * 2, 6);
+
+    const src = `import { composition, video, image, pinToPlane, trackPlane } from 'tasweerix';
+export default composition({ width: 320, height: 200, fps: 30, duration: 2, background: '#000' }, async (c) => {
+  const v = video('plane.mp4', { size: [320, 200] });
+  const plane = await trackPlane('plane.mp4', { corners: ${JSON.stringify(planeQuad(0))}, time: 0, from: 0, to: 2 });
+  v.add(image('red.png', { cornerPin: pinToPlane(v, plane) }));
+  c.add(v);
+});`;
+    const frames = [10, 40];
+    const r = await renderFrames({ dir, root: dir, frames, source: src });
+    frames.forEach((n, i) => {
+      const f = r.frames[i]!;
+      const quad = planeQuad(n);
+      // Inside the card (pulled 15 % toward its center): red. Outside: the original footage.
+      const center = mid(quad);
+      for (const p of [center, ...quad.map((p) => [p[0] + (center[0] - p[0]) * 0.15, p[1] + (center[1] - p[1]) * 0.15])]) {
+        const px = f.at(Math.round(p[0]!), Math.round(p[1]!));
+        expect(px[0]).toBeGreaterThan(200);
+        expect(px[1]).toBeLessThan(60);
+      }
+      for (const p of quad.map((p) => [p[0] + (p[0] - center[0]) * 0.2, p[1] + (p[1] - center[1]) * 0.2])) {
+        const px = f.at(Math.round(p[0]!), Math.round(p[1]!));
+        expect(px[0] > 200 && px[1] < 60 && px[2] < 60).toBe(false);
+      }
+    });
+  });
+});
+
 describe('stabilize command', () => {
   it('renders a stabilized copy through the CLI', () => {
     const bin = join(__dirname, '../../cli/bin/tasweerix.mjs');
@@ -395,5 +487,9 @@ describe('stabilize command', () => {
     const out3 = spawnSync(process.execPath, [bin, 'stabilize', 'rolling.mp4', '--rolling-shutter', 'auto', '-o', 'rolling.steady.mp4'], { cwd: dir, encoding: 'utf8' });
     expect(out3.status).toBe(0);
     expect(out3.stdout + out3.stderr).toMatch(/rolling shutter: estimated readout \d+%/);
+    const q = planeQuad(0).flat().map((v) => v.toFixed(1)).join(',');
+    const out4 = execFileSync(process.execPath, [bin, 'track', 'plane.mp4', '--corners', q, '--to', '1', '--every', '10'], { cwd: dir, encoding: 'utf8' });
+    expect(out4).toMatch(/const plane = keys\(\[/);
+    expect(out4.match(/^  \[/gm)).toHaveLength(3);
   });
 });

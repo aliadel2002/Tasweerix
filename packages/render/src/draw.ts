@@ -191,6 +191,66 @@ void main() {
   outColor = texture(uTex, uCrop.xy + uv * uCrop.zw);
 }`;
 
+/** Corner pin: each output pixel maps through a homography to the picture's unit square. */
+const PIN_FRAG = `${GLSL_PRELUDE}
+uniform vec3 uH0;
+uniform vec3 uH1;
+uniform vec3 uH2;
+uniform vec4 uCrop;
+void main() {
+  vec3 q = vec3(vUv, 1.0);
+  vec3 p = vec3(dot(uH0, q), dot(uH1, q), dot(uH2, q));
+  if (p.z <= 0.0) { outColor = vec4(0.0); return; }
+  vec2 uv = p.xy / p.z;
+  if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) { outColor = vec4(0.0); return; }
+  outColor = texture(uTex, uCrop.xy + uv * uCrop.zw);
+}`;
+
+/** Homography (row-major) mapping the unit square (0,0) (1,0) (1,1) (0,1) onto a quad (Heckbert). */
+function squareToQuad(q: readonly Vec2[]): number[] | null {
+  const [[x0, y0], [x1, y1], [x2, y2], [x3, y3]] = q as Vec2[] as [Vec2, Vec2, Vec2, Vec2];
+  const dx1 = x1 - x2;
+  const dx2 = x3 - x2;
+  const dx3 = x0 - x1 + x2 - x3;
+  const dy1 = y1 - y2;
+  const dy2 = y3 - y2;
+  const dy3 = y0 - y1 + y2 - y3;
+  const den = dx1 * dy2 - dx2 * dy1;
+  if (Math.abs(den) < 1e-12) return null;
+  const g = (dx3 * dy2 - dx2 * dy3) / den;
+  const h = (dx1 * dy3 - dx3 * dy1) / den;
+  return [x1 - x0 + g * x1, x3 - x0 + h * x3, x0, y1 - y0 + g * y1, y3 - y0 + h * y3, y0, g, h, 1];
+}
+
+const mul3 = (a: number[], b: number[]) => [0, 1, 2].flatMap((i) => [0, 1, 2].map((j) => a[i * 3]! * b[j]! + a[i * 3 + 1]! * b[3 + j]! + a[i * 3 + 2]! * b[6 + j]!));
+
+/** Draws a picture warped onto `quad` (local coordinates) on the GPU. */
+function drawCornerPinned(d: DrawContext, img: CanvasImageSource & { width: number; height: number }, quad: Vec2[], src: [number, number, number, number]) {
+  const G = squareToQuad(quad);
+  if (!G || quad.some((p) => !Number.isFinite(p[0]) || !Number.isFinite(p[1]))) return;
+  const xs = quad.map((p) => p[0]);
+  const ys = quad.map((p) => p[1]);
+  const x0 = Math.min(...xs);
+  const y0 = Math.min(...ys);
+  const bw = Math.max(...xs) - x0;
+  const bh = Math.max(...ys) - y0;
+  if (bw < 1e-6 || bh < 1e-6) return;
+  // Output resolution follows the node's on-screen scale.
+  const m = d.matrix;
+  const k = Math.sqrt(Math.abs(m[0] * m[3] - m[1] * m[2])) * d.renderer.scale;
+  const w = Math.max(1, Math.min(4096, Math.round(bw * k)));
+  const h = Math.max(1, Math.min(4096, Math.round(bh * k)));
+  const M = mul3(invert3(G), [bw, 0, x0, 0, bh, y0, 0, 0, 1]);
+  const gl = d.renderer.gl;
+  const tex = gl.upload(img as TexImageSource);
+  const out = gl.run(PIN_FRAG, { uTex: tex, uH0: M.slice(0, 3), uH1: M.slice(3, 6), uH2: M.slice(6, 9), uCrop: src }, gl.target(w, h));
+  const warped = gl.output(out);
+  d.ctx.drawImage(warped, 0, 0, w, h, x0, y0, bw, bh);
+  warped.close?.();
+  gl.release(tex);
+  gl.release(out);
+}
+
 /** Inverse of a row-major 3 × 3 matrix (unnormalized: the scale cancels in the projection). */
 function invert3(m: readonly number[]): number[] {
   const [a, b, c, d, e, f, g, h, i] = m as number[];
@@ -210,6 +270,12 @@ export function drawMedia(d: DrawContext, img: CanvasImageSource & { width: numb
   // Source rect is expressed in natural pixels; the served frame may be scaled.
   const kx = img.width / natW;
   const ky = img.height / natH;
+  const pin = d.props.cornerPin as Vec2[] | null | undefined;
+  if (pin && pin.length === 4) {
+    d.ctx.imageSmoothingEnabled = true;
+    drawCornerPinned(d, img, pin, [(sx * kx) / img.width, (sy * ky) / img.height, (sw * kx) / img.width, (sh * ky) / img.height]);
+    return;
+  }
   const clip = d.props.fit === 'cover' || !!xf;
   if (clip) {
     d.ctx.save();
