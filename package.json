@@ -12,6 +12,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "test:browser": "vitest run --config vitest.browser.config.ts",
+    "test:gpu": "TASWEERIX_GPU_TEST=require vitest run packages/cli/test/gpu-parity.test.ts",
     "tasweerix": "node packages/cli/bin/tasweerix.mjs",
     "studio": "node packages/cli/bin/tasweerix.mjs studio examples/promo",
     "format": "prettier --write .",

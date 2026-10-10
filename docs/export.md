@@ -52,6 +52,15 @@ Vulkan, then EGL, on Linux, Metal on macOS and D3D11 on Windows, and logs which 
 `--gpu off` forces software rendering, `--gpu on` tries the GPU even where no device node is visible,
 and `TASWEERIX_GPU` sets the default.
 
+`packages/cli/test/gpu-parity.test.ts` renders 2D filter, transition, 16-bit and 3D frames with
+SwiftShader and with every GPU flag set, and fails when a backend differs (below 32 dB PSNR, or more
+than 1% of pixels off by over 24 levels). It runs in `npm test` and skips backends that fall back to
+SwiftShader; with Mesa installed on Linux (`mesa-vulkan-drivers libegl-mesa0`) it exercises the ANGLE
+Vulkan and EGL code paths on llvmpipe. On a machine with a GPU, `npm run test:gpu` runs it and fails
+if no hardware GPU answered; diff images land in `packages/cli/test/.tmp-gpu/<backend>/`. On ANGLE
+Vulkan a half-float drawing buffer snapshots as blank, so 16-bit exports read the GPU output back
+there instead.
+
 Without a GPU, Chromium renders WebGL with SwiftShader on the CPU. That is correct but slow, and every
 full-frame shader pass costs time. The renderer keeps passes down: consecutive per-pixel filters (grade,
 levels, curves, HSL, LUT, vignette and the like) run as one pass, and the last filter of a layer,
