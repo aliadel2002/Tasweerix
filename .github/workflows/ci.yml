@@ -31,9 +31,10 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      # FFmpeg for media decode/encode; xmllint validates exported FCPXML.
-      - name: Install FFmpeg and xmllint
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg libxml2-utils
+      # FFmpeg for media decode/encode; xmllint validates exported FCPXML. Mesa's llvmpipe / lavapipe
+      # lets the GPU parity test run Chromium's ANGLE Vulkan and EGL backends without a GPU.
+      - name: Install FFmpeg, xmllint and Mesa
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg libxml2-utils mesa-vulkan-drivers libegl-mesa0 libegl1
 
       # OpenTimelineIO cross-checks exported/imported timelines (those tests skip without it).
       - name: Install OpenTimelineIO

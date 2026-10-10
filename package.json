@@ -12,6 +12,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "test:browser": "vitest run --config vitest.browser.config.ts",
+    "gpu-check": "node scripts/gpu-check.mjs",
     "tasweerix": "node packages/cli/bin/tasweerix.mjs",
     "studio": "node packages/cli/bin/tasweerix.mjs studio examples/promo",
     "format": "prettier --write .",

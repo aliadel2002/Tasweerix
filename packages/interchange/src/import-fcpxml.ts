@@ -1,7 +1,7 @@
 import { parseXml, type MediaInfo, type XmlNode } from '@tasweerix/core';
 import type { TEffect, TKey, TKeyed, TTransform, TimelineModel } from './model';
 import { mapEffect } from './effects';
-import { applyTimeMap, applyTransition, baseName, emptyModel, find, findAll, finishModel, isAudioPath, isImagePath, kid, kids, textOf, transitionKind, urlToPath, type PlacedClip, type TransitionMark } from './util';
+import { applyEdgeFade, applyTimeMap, applyTransition, baseName, emptyModel, find, findAll, finishModel, isAudioPath, isImagePath, kid, kids, textOf, transitionKind, urlToPath, type PlacedClip, type TransitionMark } from './util';
 
 /** Parses an FCPXML rational time ("1001/30000s", "5s", "0s"). */
 export function fcpTime(v: string | undefined): number {
@@ -11,6 +11,9 @@ export function fcpTime(v: string | undefined): number {
   return Number(m[1]) / (m[2] ? Number(m[2]) : 1);
 }
 
+/** A span of the timeline [start, end). */
+type Window = [number, number];
+
 interface Asset {
   id: string;
   name: string;
@@ -19,6 +22,7 @@ interface Asset {
   duration: number;
   hasVideo: boolean;
   hasAudio: boolean;
+  format?: string;
   info: MediaInfo;
 }
 
@@ -37,10 +41,47 @@ const easeOf = (interp: string | undefined): string | undefined => (interp === '
 /** A single number ("20", "-3.5"); vectors and colors are not numeric parameters. */
 const num1 = (v: string): number | undefined => (/^\s*-?\d+(\.\d+)?(e-?\d+)?\s*$/i.test(v) ? Number(v) : undefined);
 
-const STORY = new Set(['asset-clip', 'clip', 'video', 'audio', 'gap', 'title', 'ref-clip', 'sync-clip', 'mc-clip', 'spine', 'transition', 'generator', 'live-drawing']);
+const STORY = new Set(['asset-clip', 'clip', 'video', 'audio', 'gap', 'title', 'ref-clip', 'sync-clip', 'mc-clip', 'audition', 'spine', 'transition', 'generator', 'live-drawing']);
+
+/** Frame rates of `conform-rate srcFrameRate` and of sequences: nominal rate, NTSC (×1000/1001), drop frame. */
+interface Rate {
+  nominal: number;
+  ntsc: boolean;
+  drop: boolean;
+}
+const rateOf = (fps: number, drop = false): Rate => ({ nominal: Math.round(fps), ntsc: Math.abs(fps - Math.round(fps)) > 0.001, drop });
+const parseSrcRate = (v: string): Rate | undefined => {
+  const m = /^(\d+(?:\.\d+)?)(d)?$/.exec(v.trim());
+  return m ? rateOf(Number(m[1]) === 23.98 ? 24000 / 1001 : Number(m[1]), !!m[2]) : undefined;
+};
+const seconds = (r: Rate) => (r.ntsc ? 1001 / (r.nominal * 1000) : 1 / r.nominal);
 
 /**
- * Reads FCPXML (1.6 – 1.11, also .fcpxmld bundles' Info.fcpxml): the project's spine, connected
+ * How much a clip's local time stretches on the timeline when Final Cut conforms its media rate
+ * (`conform-rate` with scaling on): timeline time = local time × factor, so the media plays at
+ * 1 / factor. Final Cut speeds NTSC media up to whole rates (23.98 → 24, 30, 60, also inside
+ * 29.97 and 59.94 sequences), and plays 25 fps media at 24 (and the reverse) frame for frame.
+ * Checked against marker positions read from Final Cut for 23.98 – 60 fps exports.
+ */
+export function conformFactor(media: Rate, timeline: Rate): number {
+  const t = seconds(timeline);
+  const m = seconds(media);
+  if (media.ntsc && !media.drop) {
+    if (timeline.drop) return 1;
+    if (!timeline.ntsc) return 1 / 1.001;
+    if (media.nominal % 24 === 0) return timeline.nominal % 24 === 0 ? 1 : 1 / 1.001;
+    return timeline.nominal % 24 === 0 ? 1.001 : 1;
+  }
+  if (media.drop) return timeline.drop ? 1 : t / m;
+  // Whole media rate.
+  if (timeline.drop) return m / t;
+  if (timeline.ntsc) return t / m;
+  const pair = [media.nominal, timeline.nominal].sort().join('/');
+  return pair === '24/25' ? t / m : 1;
+}
+
+/**
+ * Reads FCPXML (1.6 – 1.13, also .fcpxmld bundles' Info.fcpxml): the project's spine, connected
  * clips and secondary storylines (lanes), compound clips, transitions, linear retimes, volume,
  * titles and markers.
  */
@@ -69,6 +110,7 @@ export function fromFCPXML(text: string): TimelineModel {
         duration: fcpTime(r.attrs.duration),
         hasVideo: r.attrs.hasVideo === '1',
         hasAudio: r.attrs.hasAudio === '1',
+        format: r.attrs.format,
         info: {
           duration: fcpTime(r.attrs.duration) || undefined,
           width: fmt?.attrs.width ? Number(fmt.attrs.width) : undefined,
@@ -82,16 +124,26 @@ export function fromFCPXML(text: string): TimelineModel {
     }
   }
   const project = find(doc, 'project');
-  const sequence = project ? kid(project, 'sequence') : find(doc, 'sequence');
-  if (!sequence) throw new Error('FCPXML: no <sequence> found');
+  // Without a project the file holds browser clips (a clip or compound clip exported on its own):
+  // they become a timeline of those clips, end to end.
+  const sequence = project ? kid(project, 'sequence') : standaloneSequence(doc, assets, media);
+  if (!sequence) throw new Error('FCPXML: no <project> or clip found');
   const fmt = formats.get(sequence.attrs.format ?? '');
-  const m = emptyModel({ name: project?.attrs.name ?? 'Imported timeline' });
+  const m = emptyModel({ name: project?.attrs.name ?? sequence.attrs.name ?? 'Imported timeline' });
   if (fmt) {
     const fd = fcpTime(fmt.attrs.frameDuration);
     if (fd > 0) m.fps = +(1 / fd).toFixed(3);
     if (fmt.attrs.width) m.width = Number(fmt.attrs.width);
     if (fmt.attrs.height) m.height = Number(fmt.attrs.height);
   }
+  const timelineRate = rateOf(m.fps, sequence.attrs.tcFormat === 'DF');
+  /** Conform factor of an element with a `conform-rate` child (1 without one). */
+  const conformOf = (el: XmlNode): number => {
+    const c = kid(el, 'conform-rate');
+    if (!c || c.attrs.scaleEnabled === '0') return 1;
+    const media = parseSrcRate(c.attrs.srcFrameRate ?? '');
+    return media ? conformFactor(media, timelineRate) : 1;
+  };
   const rate = sequence.attrs.audioRate;
   if (rate) m.sampleRate = rate.startsWith('96') ? 96000 : rate.startsWith('44') ? 44100 : 48000;
 
@@ -123,31 +175,40 @@ export function fromFCPXML(text: string): TimelineModel {
     return Number.isFinite(n) ? n : undefined;
   };
 
-  /** Markers of an element whose local time `t` sits at global `toGlobal(t)`. */
-  const markersOf = (el: XmlNode, toGlobal: (t: number) => number) => {
+  /**
+   * Markers of an element whose local time `t` sits at global `toGlobal(t)`. Markers outside the
+   * visible window (trimmed off, or outside a compound clip's range) are hidden in Final Cut too.
+   */
+  const markersOf = (el: XmlNode, toGlobal: (t: number) => number, win: Window) => {
     for (const mk of kids(el)) {
       if (mk.tag !== 'marker' && mk.tag !== 'chapter-marker') continue;
-      m.markers.push({ time: Math.max(0, toGlobal(fcpTime(mk.attrs.start))), label: mk.attrs.value ?? 'Marker', color: mk.tag === 'chapter-marker' ? 'orange' : undefined });
+      const time = toGlobal(fcpTime(mk.attrs.start));
+      if (time < win[0] - 1e-6 || time >= win[1] - 1e-6) continue;
+      m.markers.push({ time: Math.max(0, time), label: mk.attrs.value ?? 'Marker', color: mk.tag === 'chapter-marker' ? 'orange' : undefined });
     }
   };
 
   const unsupportedChildren = (el: XmlNode) => {
     for (const c of kids(el)) {
       if (c.tag === 'filter-audio') notes.add(`${c.attrs.name ?? c.tag} effect on ${el.attrs.name ?? el.tag}`);
-      else if (c.tag.startsWith('adjust-') && !HANDLED_ADJUSTMENTS.has(c.tag)) notes.add(`${c.tag} on ${el.attrs.name ?? el.tag}`);
+      else if (c.tag === 'adjust-colorConform') {
+        // HDR ↔ SDR tone mapping; Final Cut writes it on every clip, mostly as "none".
+        if (c.attrs.enabled !== '0' && c.attrs.conformType && c.attrs.conformType !== 'conformNone') notes.add(`HDR color conform (${c.attrs.conformType}) on ${el.attrs.name ?? el.tag}`);
+      } else if (c.tag.startsWith('adjust-') && !HANDLED_ADJUSTMENTS.has(c.tag)) notes.add(`${c.tag} on ${el.attrs.name ?? el.tag}`);
     }
   };
 
   /** Adds a media clip that references an asset. `sourceIn` is in the asset's own timecode. */
-  const addAsset = (el: XmlNode, ref: string, lane: number, start: number, duration: number, sourceStart: number, forceAudio = false, retimed?: { el: XmlNode; toGlobal: (t: number) => number; toAsset: (v: number) => number }) => {
+  const addAsset = (el: XmlNode, ref: string, lane: number, start: number, duration: number, sourceStart: number, forceAudio = false, retimed?: { el: XmlNode; toGlobal: (t: number) => number; toAsset: (v: number) => number }, conform = 1) => {
     const asset = assets.get(ref);
     if (!asset) {
-      notes.add(`missing asset ${ref} (${el.attrs.name ?? el.tag})`);
+      // A video element can also reference a generator (Clouds, Gradient …), which has no media.
+      notes.add(effectNames.has(ref) ? `generator ${effectNames.get(ref) || el.attrs.name || ref}` : `missing asset ${ref} (${el.attrs.name ?? el.tag})`);
       return;
     }
     const path = urlToPath(asset.url);
     const retime = linearSpeed(el);
-    const speed = retime?.speed ?? 1;
+    const speed = (retime?.speed ?? 1) / conform;
     const image = !forceAudio && asset.hasVideo && (isImagePath(path) || asset.duration === 0);
     const audioOnly = forceAudio || (!asset.hasVideo && (asset.hasAudio || isAudioPath(path)));
     const kind: PlacedClip['kind'] = image ? 'image' : audioOnly ? 'audio' : 'video';
@@ -275,30 +336,27 @@ export function fromFCPXML(text: string): TimelineModel {
    * Walks the story elements of a container. `toGlobal` maps the container's local time to the
    * timeline; `lane` is the container's absolute lane.
    */
-  const walkChildren = (container: XmlNode, toGlobal: (t: number) => number, lane: number, isSpine: boolean) => {
+  const walkChildren = (container: XmlNode, toGlobal: (t: number) => number, lane: number, isSpine: boolean, win: Window, origin = 0) => {
     const els = kids(container).filter((c) => STORY.has(c.tag));
-    // A spine's children are laid end to end from the spine's start.
-    let map = toGlobal;
-    if (isSpine) {
-      const first = Math.min(...els.filter((c) => c.tag !== 'transition').map((c) => fcpTime(c.attrs.offset)), Infinity);
-      const base = Number.isFinite(first) ? first : 0;
-      map = (t) => toGlobal(t - base);
-    }
     for (const el of els) {
       const relLane = el.attrs.lane !== undefined && !isSpine ? Number(el.attrs.lane) : 0;
       // Connected items (with lane) attach to their parent; spine items are on the spine's lane.
       if (!isSpine && el.attrs.lane === undefined) continue;
-      walkElement(el, map, lane + relLane);
+      walkElement(el, toGlobal, lane + relLane, win, origin);
     }
   };
 
-  const walkElement = (el: XmlNode, toGlobal: (t: number) => number, lane: number) => {
+  /** `origin` is the time of the container where its story begins (where transitions count from). */
+  const walkElement = (el: XmlNode, toGlobal: (t: number) => number, lane: number, win: Window, origin = 0) => {
     const offset = fcpTime(el.attrs.offset);
     const duration = fcpTime(el.attrs.duration);
     const localStart = fcpTime(el.attrs.start);
     const g0 = toGlobal(offset);
+    const conform = conformOf(el);
     // Element-local time → timeline time.
-    const local = (t: number) => g0 + (t - localStart);
+    const local = (t: number) => g0 + (t - localStart) * conform;
+    // What of the element shows on the timeline (bounds markers of nested content).
+    const inner: Window = [Math.max(win[0], g0), Math.min(win[1], g0 + duration)];
     if (el.attrs.enabled === '0') {
       notes.add(`disabled ${el.attrs.name ?? el.tag}`);
       return;
@@ -306,16 +364,20 @@ export function fromFCPXML(text: string): TimelineModel {
     switch (el.tag) {
       case 'transition':
         transitions.push({ lane, start: g0, end: g0 + duration, type: transitionKind(el.attrs.name) });
+        // Transition markers count from the container's origin, not from the transition.
+        markersOf(el, (t) => g0 + (t - origin), win);
         return;
       case 'spine':
-        walkChildren(el, (t) => toGlobal(offset + t), lane, true);
+        // A storyline runs in timeline time from where it sits in its parent (a conformed parent
+        // stretches the parent's local time, not the storyline's).
+        walkChildren(el, (t) => g0 + t, lane, true, win);
         return;
       case 'asset-clip':
       case 'video':
       case 'audio': {
         unsupportedChildren(el);
         const before = placed.length;
-        addAsset(el, el.attrs.ref ?? '', lane, g0, duration, localStart, el.tag === 'audio', { el, toGlobal: local, toAsset: (v) => v });
+        addAsset(el, el.attrs.ref ?? '', lane, g0, duration, localStart, el.tag === 'audio', { el, toGlobal: local, toAsset: (v) => v }, conform);
         const added = placed[before];
         if (added && added.kind !== 'audio') {
           added.transform = transformOf(el, local);
@@ -335,11 +397,11 @@ export function fromFCPXML(text: string): TimelineModel {
           // Source time at the clip's start: the content's start plus how far into it the clip begins.
           const retime = linearSpeed(el);
           const before = placed.length;
-          addAsset(content, content.attrs.ref ?? '', lane, g0, duration, cStart + (localStart - cOff) * (retime?.speed ?? 1), content.tag === 'audio', { el, toGlobal: local, toAsset: (v) => cStart + (v - cOff) });
+          addAsset(content, content.attrs.ref ?? '', lane, g0, duration, cStart + (localStart - cOff) * (retime?.speed ?? 1), content.tag === 'audio', { el, toGlobal: local, toAsset: (v) => cStart + (v - cOff) }, conform);
           const added = placed[before];
           if (added) {
             added.name = el.attrs.name ?? added.name;
-            if (retime && !added.timeMap) added.speed = retime.speed;
+            if (retime && !added.timeMap) added.speed = retime.speed / conform;
             if (added.kind !== 'audio') {
               added.transform = transformOf(el, local) ?? transformOf(content, local);
               added.effects = [...(effectsOf(content, local) ?? []), ...(effectsOf(el, local) ?? [])];
@@ -367,10 +429,12 @@ export function fromFCPXML(text: string): TimelineModel {
           const mres = media.get(el.attrs.ref ?? '');
           const seq = mres ? kid(mres, 'sequence') : undefined;
           const spine = seq ? kid(seq, 'spine') : undefined;
-          if (spine) walkChildren(spine, local, lane, true);
+          // Without a start, the compound clip shows its sequence from the beginning.
+          const seqStart = el.attrs.start === undefined ? fcpTime(seq?.attrs.tcStart) : localStart;
+          if (spine) walkChildren(spine, (t) => g0 + (t - seqStart) * conform, lane, true, inner, fcpTime(seq?.attrs.tcStart));
           else notes.add(`compound clip without sequence: ${el.attrs.name ?? ''}`);
         } else {
-          for (const c of kids(el).filter((x) => STORY.has(x.tag) && x.attrs.lane === undefined)) walkElement(c, local, lane);
+          for (const c of kids(el).filter((x) => STORY.has(x.tag) && x.attrs.lane === undefined)) walkElement(c, local, lane, inner);
         }
         trimToWindow(placed.splice(before), g0, g0 + duration);
         break;
@@ -394,7 +458,7 @@ export function fromFCPXML(text: string): TimelineModel {
         const audioAngle = active('audio');
         const walkAngle = (angle: XmlNode | undefined) => {
           const before = placed.length;
-          for (const c of kids(angle).filter((x) => STORY.has(x.tag) && x.attrs.lane === undefined)) walkElement(c, local, lane);
+          for (const c of kids(angle).filter((x) => STORY.has(x.tag) && x.attrs.lane === undefined)) walkElement(c, local, lane, inner);
           return placed.splice(before);
         };
         const out: PlacedClip[] = [];
@@ -414,14 +478,22 @@ export function fromFCPXML(text: string): TimelineModel {
         trimToWindow(out, g0, g0 + duration);
         break;
       }
+      case 'audition': {
+        // The first story element is the active pick; the others are alternatives.
+        const pick = kids(el).find((c) => STORY.has(c.tag));
+        if (pick) walkElement(pick, (t) => g0 + t - fcpTime(pick.attrs.offset), lane, win);
+        const alternatives = kids(el).filter((c) => STORY.has(c.tag)).length - 1;
+        if (alternatives > 0) notes.add(`${alternatives} alternative${alternatives > 1 ? 's' : ''} of audition ${pick?.attrs.name ?? ''} (only the active pick is imported)`);
+        return;
+      }
       case 'gap':
         break;
       default:
         notes.add(`${el.tag} ${el.attrs.name ?? ''}`.trim());
     }
-    markersOf(el, local);
+    markersOf(el, local, inner);
     // Connected clips and secondary storylines.
-    walkChildren(el, local, lane, false);
+    walkChildren(el, local, lane, false, win);
   };
 
   /** Keeps the parts of flattened clips inside [g0, end] (compound and multicam clips). */
@@ -439,11 +511,37 @@ export function fromFCPXML(text: string): TimelineModel {
   }
 
   const spine = kid(sequence, 'spine');
-  if (spine) walkChildren(spine, (t) => t, 0, true);
-  for (const t of transitions) if (!applyTransition(placed, t)) notes.add('a transition that is not between two clips');
+  // Sequence time starts at its timecode start (01:00:00:00 in most projects).
+  const tcStart = fcpTime(sequence.attrs.tcStart);
+  if (spine) walkChildren(spine, (t) => t - tcStart, 0, true, [-Infinity, Infinity], tcStart);
+  for (const t of transitions) if (!applyTransition(placed, t) && !applyEdgeFade(placed, t)) notes.add('a transition that is not between two clips');
   m.duration = fcpTime(sequence.attrs.duration);
   m.unsupported = [...notes];
   return finishModel(m, placed);
+}
+
+/** A sequence holding the story elements found outside resources and projects, end to end. */
+function standaloneSequence(doc: XmlNode, assets: Map<string, { format?: string }>, media: Map<string, XmlNode>): XmlNode | undefined {
+  const clips: XmlNode[] = [];
+  const visit = (n: XmlNode) => {
+    for (const c of n.children) {
+      if (c.tag === 'library' || c.tag === 'event') visit(c);
+      else if (STORY.has(c.tag) && c.tag !== 'transition' && c.tag !== 'spine') clips.push(c);
+    }
+  };
+  visit(doc);
+  if (!clips.length) return undefined;
+  let at = 0;
+  const spine: XmlNode = { tag: 'spine', attrs: {}, text: '', children: [] };
+  for (const c of clips) {
+    spine.children.push({ ...c, attrs: { ...c.attrs, offset: `${at}s` } });
+    at += fcpTime(c.attrs.duration);
+  }
+  // The first clip's format, or that of its compound clip's sequence or asset.
+  const first = clips[0]!;
+  const mediaSeq = media.get(first.attrs.ref ?? '');
+  const format = first.attrs.format ?? (mediaSeq ? kid(mediaSeq, 'sequence')?.attrs.format : undefined) ?? assets.get(first.attrs.ref ?? '')?.format;
+  return { tag: 'sequence', attrs: { name: first.attrs.name ?? 'Imported clip', duration: `${at}s`, ...(format ? { format } : {}) }, text: '', children: [spine] };
 }
 
 const isZero = (k: TKeyed<[number, number]>): boolean => !Array.isArray(k[0]) && typeof k[0] !== 'object' && (k as [number, number])[0] === 0 && (k as [number, number])[1] === 0;
