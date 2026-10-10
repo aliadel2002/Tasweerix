@@ -2,6 +2,7 @@ import { mat2d, type SceneNode, type Vec2 } from '@tasweerix/core';
 import { createSurface, ctx2d, registerDrawer, type Ctx2D, type DrawContext, type Renderer, type Surface } from '@tasweerix/render';
 import { evaluateScene, type DrawItem } from './evaluate';
 import { MeshNode, Object3DNode, type Scene3DNode } from './nodes';
+import { isBuiltinEnvironment, parseHDR, type HDRImage } from './environment';
 import { Renderer3D, type TexSource } from './renderer3d';
 
 const renderers = new WeakMap<Renderer, Renderer3D>();
@@ -15,6 +16,8 @@ export function renderer3dFor(r: Renderer): Renderer3D {
 }
 
 const MAX_SIZE = 4096;
+const hdrs = new Map<string, HDRImage>();
+const isHDR = (src: string) => /\.hdr(\?.*)?$/i.test(src);
 
 /** Renders a texture node (video, comp, group …) into a reusable surface for this frame. */
 function layerTexture(d: DrawContext, it: DrawItem, node: SceneNode): TexSource {
@@ -65,6 +68,13 @@ registerDrawer(
         return img ? { source: img as TexSource } : null;
       }
       return null;
+    }, (src) => {
+      if (isHDR(src)) {
+        const image = hdrs.get(src);
+        return image ? { kind: 'hdr', image } : null;
+      }
+      const image = d.renderer.assets.getImage(src);
+      return image ? { kind: 'image', image: image as TexSource } : null;
     });
     const img = typeof (canvas as OffscreenCanvas).transferToImageBitmap === 'function' ? (canvas as OffscreenCanvas).transferToImageBitmap() : canvas;
     d.ctx.drawImage(img, -size[0] / 2, -size[1] / 2, size[0], size[1]);
@@ -75,6 +85,11 @@ registerDrawer(
     // Image textures load before the first frame (video and layer maps render per frame).
     async prepare(node, renderer) {
       const tasks: Promise<unknown>[] = [];
+      const env = node.props.environment;
+      if (typeof env === 'string' && env && !isBuiltinEnvironment(env)) {
+        if (!isHDR(env)) tasks.push(renderer.assets.loadImage(env));
+        else if (!hdrs.has(env)) tasks.push(renderer.assets.loadBinary(env).then((b) => hdrs.set(env, parseHDR(b))));
+      }
       node.walk((n) => {
         if (n instanceof MeshNode && typeof n.props.map === 'string' && n.props.map) tasks.push(renderer.assets.loadImage(n.props.map));
         return n === node || n instanceof Object3DNode ? undefined : false;

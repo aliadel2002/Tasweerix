@@ -9,6 +9,8 @@ export * from './math3d';
 export * from './geometry';
 export * from './triangulate';
 export * from './loaders';
+export * from './pose';
+export * from './environment';
 export * from './text3d';
 export * from './nodes';
 export * from './evaluate';
