@@ -6,7 +6,7 @@ import { definePlugin, type CommandContext, type Plugin, type Vec2 } from '@tasw
 import { FFMPEG, nodeEnv, probe } from '@tasweerix/media/node';
 import { gray, type Gray } from './image';
 import { MotionEstimator, type MotionData } from './motion';
-import { shakeStats } from './stabilize';
+import { estimateReadout, shakeStats } from './stabilize';
 import { trackPointInFrames, type PointTrack } from './track';
 import { analyzeMotion, ANALYSIS_WIDTH, trackPoint } from './index';
 
@@ -65,7 +65,7 @@ export async function streamGrayFrames(file: string, o: GrayStreamOptions, onFra
 export async function motionAnalysis(file: string, params: Record<string, unknown>): Promise<MotionData> {
   let est: MotionEstimator | undefined;
   const meta = await streamGrayFrames(file, { width: Number(params.width ?? ANALYSIS_WIDTH), from: Number(params.from ?? 0), to: params.to as number | null }, (frame, _i, info) => {
-    est ??= new MotionEstimator(info.width, info.height, { translationOnly: !!params.translationOnly, model: params.model === 'perspective' ? 'perspective' : 'similarity' });
+    est ??= new MotionEstimator(info.width, info.height, { translationOnly: !!params.translationOnly, model: params.model === 'perspective' ? 'perspective' : 'similarity', rollingShutter: !!params.rollingShutter });
     est.push(frame);
   });
   if (!est) throw new Error(`No frames decoded from ${file}`);
@@ -112,6 +112,7 @@ export const visionPlugin: Plugin = definePlugin({
         { flags: '--max-zoom <n>', description: 'largest automatic zoom used to hide edges', default: '1.3' },
         { flags: '--crop <mode>', description: 'auto | none | <zoom>', default: 'auto' },
         { flags: '--no-rotation', description: 'do not correct rotation' },
+        { flags: '--rolling-shutter <readout>', description: "correct rolling-shutter skew and wobble: 'auto' or the readout time as a fraction of a frame" },
         { flags: '--model <model>', description: 'similarity | perspective (also removes keystone wobble)', default: 'similarity' },
         { flags: '--analyze', description: 'only measure the shake and print it' },
       ],
@@ -123,13 +124,15 @@ export const visionPlugin: Plugin = definePlugin({
         const o = ctx.options;
         const t0 = Date.now();
         const model = o.model === 'perspective' ? 'perspective' : 'similarity';
-        const motion = await analyzeMotion(src, { model }, env);
+        const rollingShutter = o.rollingShutter === undefined ? undefined : o.rollingShutter === 'auto' ? ('auto' as const) : num(o.rollingShutter);
+        const motion = await analyzeMotion(src, { model, rollingShutter: rollingShutter !== undefined && rollingShutter !== 0 }, env);
         const s = shakeStats(motion);
         const k = (await probe(file)).width! / motion.width;
         ctx.log(`shake: ${s.frames} frames, mean ${(s.meanShift * k).toFixed(1)} px/frame, max ${(s.maxShift * k).toFixed(1)} px, max rotation ${s.maxRotation.toFixed(2)}° (${((Date.now() - t0) / 1000).toFixed(1)}s)`);
+        if (motion.shear) ctx.log(`rolling shutter: estimated readout ${(estimateReadout(motion) * 100).toFixed(0)}% of a frame`);
         if (o.analyze) return motion;
         const info = await probe(file);
-        const opts = { mode: o.mode, smoothing: num(o.smoothing, 1), maxZoom: num(o.maxZoom, 1.3), crop: o.crop === 'auto' || o.crop === 'none' ? o.crop : num(o.crop), rotation: o.rotation !== false, model };
+        const opts = { mode: o.mode, smoothing: num(o.smoothing, 1), maxZoom: num(o.maxZoom, 1.3), crop: o.crop === 'auto' || o.crop === 'none' ? o.crop : num(o.crop), rotation: o.rotation !== false, model, rollingShutter };
         // A small generated project renders the stabilized clip with the regular export pipeline.
         const dir = join(root, '.tasweerix');
         mkdirSync(dir, { recursive: true });

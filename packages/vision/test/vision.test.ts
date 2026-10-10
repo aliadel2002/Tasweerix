@@ -1,11 +1,11 @@
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { usePlugin, video } from '@tasweerix/core';
 import { nodeEnv } from '@tasweerix/media/node';
 import { closeTestBrowser, renderFrames } from '../../cli/src/testing';
-import { analyzeMotion, follow, pointAt, computeStabilization, correctionAt, decompose, fitSimilarity, goodFeatures, gray, invert, compose, apply, ransacSimilarity, stabilize, trackPoint, zoomToCover, fitHomography, ransacHomography, happly, hcompose, hinvert, hscale, fromSimilarity, H_IDENTITY, type Homography, type MotionData, type Similarity } from '../src';
+import { analyzeMotion, applyMediaTransform, estimateReadout, fitSimilarityShear, rowShifts, follow, pointAt, computeStabilization, correctionAt, decompose, fitSimilarity, goodFeatures, gray, invert, compose, apply, ransacSimilarity, stabilize, trackPoint, zoomToCover, fitHomography, ransacHomography, happly, hcompose, hinvert, hscale, fromSimilarity, H_IDENTITY, type Homography, type MotionData, type Similarity } from '../src';
 import { visionPlugin } from '../src/node';
 
 const dir = join(__dirname, '.tmp');
@@ -15,6 +15,10 @@ const ff = (...a: string[]) => execFileSync('ffmpeg', ['-y', '-v', 'error', ...a
 // Known handheld-style shake: the crop window wanders, so the content moves the opposite way.
 const jx = (n: number) => Math.round(160 + 20 * Math.sin(n * 0.7) + 8 * Math.sin(n * 2.3));
 const jy = (n: number) => Math.round(100 + 14 * Math.cos(n * 1.1));
+// Rolling-shutter footage: continuous shake sampled per row.
+const RS_READOUT = 0.8;
+const rsx = (t: number) => 150 + 20 * Math.sin(t * 0.5) + 6 * Math.sin(t * 1.2);
+const rsy = (t: number) => 90 + 14 * Math.cos(t * 0.7);
 
 beforeAll(() => {
   usePlugin(visionPlugin);
@@ -27,6 +31,30 @@ beforeAll(() => {
   // Keystone wobble: the top and bottom edges of the view swing in depth (a camera tilting and
   // turning), which no similarity can undo. The enlarged source keeps borders out of the crop.
   ff('-loop', '1', '-framerate', '30', '-i', join(dir, 'still.png'), '-vf', `scale=960:600,perspective=x0='36*sin(in*0.8)':y0='24*sin(in*1.1)':x1='W-36*sin(in*0.8)':y1='-24*sin(in*1.1)':x2='-36*sin(in*0.8)':y2='H+24*sin(in*1.1)':x3='W+36*sin(in*0.8)':y3='H-24*sin(in*1.1)':eval=frame,crop=480:300,scale=320:200`, '-t', '2', '-r', '30', '-pix_fmt', 'yuv444p', '-c:v', 'libx264', '-qp', '0', join(dir, 'keystone.mp4'));
+  // Rolling shutter: the same kind of shake, but each row is read 0.8 frame intervals × its height
+  // later than the top one, so rows land at different crop offsets (skew and jello).
+  const still = execFileSync('ffmpeg', ['-v', 'error', '-i', join(dir, 'still.png'), '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-'], { maxBuffer: 1 << 26 });
+  const rsFrames = Buffer.alloc(60 * 320 * 200 * 3);
+  for (let n = 0; n < 60; n++) {
+    for (let y = 0; y < 200; y++) {
+      const tau = n + RS_READOUT * (y / 200 - 0.5);
+      const ox = rsx(tau);
+      const oy = rsy(tau) + y;
+      const y0 = Math.floor(oy);
+      const fy = oy - y0;
+      for (let x = 0; x < 320; x++) {
+        const sx = ox + x;
+        const x0 = Math.floor(sx);
+        const fx = sx - x0;
+        for (let ch = 0; ch < 3; ch++) {
+          const at = (xx: number, yy: number) => still[(yy * 640 + xx) * 3 + ch]!;
+          const v = (at(x0, y0) * (1 - fx) + at(x0 + 1, y0) * fx) * (1 - fy) + (at(x0, y0 + 1) * (1 - fx) + at(x0 + 1, y0 + 1) * fx) * fy;
+          rsFrames[((n * 200 + y) * 320 + x) * 3 + ch] = Math.round(v);
+        }
+      }
+    }
+  }
+  execFileSync('ffmpeg', ['-y', '-v', 'error', '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-s', '320x200', '-r', '30', '-i', '-', '-pix_fmt', 'yuv444p', '-c:v', 'libx264', '-qp', '0', join(dir, 'rolling.mp4')], { input: rsFrames });
   // A textured patch moving over a plain background.
   ff('-f', 'lavfi', '-i', 'color=c=0x404040:s=320x200:d=2:r=30', '-i', join(dir, 'still.png'), '-filter_complex', `[1]crop=40:40:420:260[p];[0][p]overlay=x='40+t*60':y='80+20*sin(t*3)'`, '-t', '2', '-pix_fmt', 'yuv444p', '-c:v', 'libx264', '-qp', '0', join(dir, 'moving.mp4'));
 });
@@ -143,6 +171,46 @@ describe('perspective math', () => {
     const auto = computeStabilization(m, { mode: 'lock', model: 'perspective' });
     expect(auto.zoom).toBeGreaterThan(1);
     expect(auto.zoom).toBeLessThanOrEqual(1.3);
+  });
+});
+
+describe('rolling-shutter math', () => {
+  it('fits similarity with row shear exactly', () => {
+    const src = Array.from({ length: 30 }, (_, i) => [((i * 37) % 200) - 100, ((i * 53) % 120) - 60] as [number, number]);
+    const [a, b, tx, ty, wx, wy] = [1.01, 0.02, 3, -2, 4, -1.5];
+    const dst = src.map(([x, y]) => [a * x - b * y + tx + (wx * y) / 120, b * x + a * y + ty + (wy * y) / 120] as [number, number]);
+    const f = fitSimilarityShear(src, dst, 120)!;
+    [a, b, tx, ty].forEach((v, i) => expect(f.model[i]).toBeCloseTo(v, 9));
+    expect(f.shear[0]).toBeCloseTo(wx, 9);
+    expect(f.shear[1]).toBeCloseTo(wy, 9);
+  });
+
+  it('estimates the readout and corrects rows', () => {
+    // Image velocity v(t) sampled per frame interval; shear predicted for a readout of 0.6.
+    const vx = (k: number) => 8 * Math.sin(k * 0.8);
+    const n = 40;
+    const motions: Similarity[] = Array.from({ length: n }, (_, k) => (k ? [1, 0, vx(k), 0] : [1, 0, 0, 0]));
+    const shear = motions.map((_, k) => [k > 0 && k < n - 1 ? (0.6 * (vx(k + 1) - vx(k - 1))) / 2 : 0, 0] as [number, number]);
+    const m: MotionData = { version: 1, width: 320, height: 180, fps: 30, start: 0, motions, inliers: motions.map(() => 100), shear };
+    expect(estimateReadout(m)).toBeCloseTo(0.6, 6);
+    expect(estimateReadout({ ...m, shear: undefined })).toBe(0);
+    const rows = rowShifts(m, 0.6);
+    // Frame 10: a row half a frame below the center was read 0.3 intervals later.
+    const expected = (0.3 * (vx(10) + vx(11))) / 2 + (0.09 * (vx(11) - vx(10))) / 2;
+    expect((rows[10]![0] * 0.5 + rows[10]![2] * 0.25) * 320).toBeCloseTo(expected, 6);
+    const d = computeStabilization(m, { mode: 'lock', crop: 'none', rollingShutter: 'auto' });
+    expect(d.readout).toBeCloseTo(0.6, 3);
+    const xf = correctionAt(d, 10 / 30);
+    expect(xf).toMatchObject({ aspect: 180 / 320 });
+    // The center row is untouched by the row correction; the bottom row moves back by its shift.
+    const plain = d.frames[10]!;
+    expect(applyMediaTransform(xf, [0.1, 0])).toEqual(applyMediaTransform(plain, [0.1, 0]));
+    const bottom = applyMediaTransform(xf, [0.1, 0.28125]);
+    const shifted = applyMediaTransform(plain, [0.1 - (rows[10]![0] * 0.5 + rows[10]![2] * 0.25), 0.28125]);
+    expect(bottom[0]).toBeCloseTo(shifted[0], 6);
+    expect(() => computeStabilization({ ...m, shear: undefined }, { rollingShutter: 'auto' })).toThrow(/rollingShutter/);
+    // A fixed readout needs no shear data.
+    expect(computeStabilization({ ...m, shear: undefined }, { rollingShutter: 0.5 }).readout).toBe(0.5);
   });
 });
 
@@ -272,6 +340,47 @@ export default composition({ width: 320, height: 200, fps: 30, duration: 2, back
   });
 });
 
+describe('rolling-shutter stabilization (headless Chromium)', () => {
+  it('estimates the readout and removes skew and wobble on screen', async () => {
+    const m = await analyzeMotion('rolling.mp4', { rollingShutter: true }, env);
+    expect(m.shear).toHaveLength(60);
+    const r = estimateReadout(m);
+    // True readout 0.8; the frame-level velocity model reads fast shake slightly high.
+    expect(r).toBeGreaterThan(0.65);
+    expect(r).toBeLessThan(1);
+    const src = (o: string) => `import { composition, video, stabilize } from 'tasweerix';
+export default composition({ width: 320, height: 200, fps: 30, duration: 2, background: '#000' }, async (c) => {
+  const v = video('rolling.mp4', { size: [320, 200] });
+  c.add(${o ? `await stabilize(v, ${o})` : 'v'});
+});`;
+    const frames = [3, 11, 20, 37, 52];
+    const diff = (a: { at(x: number, y: number): number[] }, b: { at(x: number, y: number): number[] }) => {
+      let d = 0;
+      let n = 0;
+      for (let y = 30; y < 170; y += 2) {
+        for (let x = 60; x < 260; x += 2) {
+          const p = a.at(x, y);
+          const q = b.at(x, y);
+          d += Math.abs(p[0] - q[0]) + Math.abs(p[1] - q[1]) + Math.abs(p[2] - q[2]);
+          n += 3;
+        }
+      }
+      return d / n;
+    };
+    const spread = async (o: string) => {
+      const res = await renderFrames({ dir, root: dir, frames, source: src(o) });
+      return frames.slice(1).map((_, i) => diff(res.frames[0]!, res.frames[i + 1]!));
+    };
+    const raw = await spread('');
+    const plain = await spread("{ mode: 'lock', crop: 1.25 }");
+    const rs = await spread("{ mode: 'lock', crop: 1.25, rollingShutter: 'auto' }");
+    // Without row correction the lock still skews and wobbles; with it, only small drift remains.
+    expect(Math.max(...raw)).toBeGreaterThan(30);
+    expect(Math.max(...plain)).toBeGreaterThan(10);
+    expect(Math.max(...rs)).toBeLessThan(5);
+  });
+});
+
 describe('stabilize command', () => {
   it('renders a stabilized copy through the CLI', () => {
     const bin = join(__dirname, '../../cli/bin/tasweerix.mjs');
@@ -283,5 +392,8 @@ describe('stabilize command', () => {
     execFileSync(process.execPath, [bin, 'stabilize', 'keystone.mp4', '--mode', 'lock', '--model', 'perspective', '-o', 'keystone.locked.mp4'], { cwd: dir, stdio: ['ignore', 'pipe', 'pipe'] });
     const info2 = JSON.parse(execFileSync('ffprobe', ['-v', 'error', '-show_entries', 'stream=width,height', '-of', 'json', join(dir, 'keystone.locked.mp4')]).toString());
     expect(info2.streams[0]).toMatchObject({ width: 320, height: 200 });
+    const out3 = spawnSync(process.execPath, [bin, 'stabilize', 'rolling.mp4', '--rolling-shutter', 'auto', '-o', 'rolling.steady.mp4'], { cwd: dir, encoding: 'utf8' });
+    expect(out3.status).toBe(0);
+    expect(out3.stdout + out3.stderr).toMatch(/rolling shutter: estimated readout \d+%/);
   });
 });
