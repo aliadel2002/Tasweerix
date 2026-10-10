@@ -1,7 +1,7 @@
 import { AudioClip, type AudioEffectSpec, type BusSpec } from './audio';
 import type { Animatable } from './animatable';
 import { makeContext, type FrameContext } from './context';
-import { getEnv, type Env } from './env';
+import { getEnv, type Env, type Preparable } from './env';
 import { GroupNode, VideoNode } from './nodes';
 import { SceneNode, type NodeOptions } from './node';
 import type { Paint } from './paint';
@@ -54,6 +54,8 @@ export class Composition {
   props: Record<string, unknown>;
   prepared = false;
   meta: Record<string, unknown> = {};
+  /** Extra resources to load before rendering (registered during build). */
+  preparables: Preparable[] = [];
 
   constructor(kind: CompositionKind, opts: CompositionOptions = {}) {
     this.kind = kind;
@@ -165,6 +167,7 @@ export class Composition {
   async prepare(env: Env = getEnv()): Promise<this> {
     await this.root.prepare(env);
     await Promise.all(this.audioClips.map((a) => a.prepare(env)));
+    await Promise.all(this.preparables.map((p) => p.prepare(env)));
     this.prepared = true;
     return this;
   }
@@ -203,6 +206,17 @@ export interface CompositionDefinition<P extends Record<string, unknown> = Recor
   create(opts?: { props?: Partial<P>; env?: Env }): Promise<Composition>;
 }
 
+let building: Composition | null = null;
+/** The composition whose build function is currently running (null outside builds). */
+export function buildingComposition(): Composition | null {
+  return building;
+}
+/** Registers a resource to be prepared before the composition renders. */
+export function needs(p: Preparable): void {
+  if (!building) throw new Error('needs() must be called while a composition is being built');
+  building.preparables.push(p);
+}
+
 function define<P extends Record<string, unknown>>(
   kind: CompositionKind,
   options: CompositionOptions,
@@ -216,7 +230,13 @@ function define<P extends Record<string, unknown>>(
     async create(opts = {}) {
       const c = new Composition(kind, options);
       Object.assign(c.props, opts.props ?? {});
-      await withFps(c.fps, () => build(c, c.props as P));
+      const prev = building;
+      building = c;
+      try {
+        await withFps(c.fps, () => build(c, c.props as P));
+      } finally {
+        building = prev;
+      }
       await c.prepare(opts.env ?? getEnv());
       return c;
     },

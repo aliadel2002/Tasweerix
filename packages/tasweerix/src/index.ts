@@ -5,3 +5,4 @@
 export * from '@tasweerix/core';
 export { fx, transition, registerFilter, registerTransition, registerDrawer, registerTextEngine, type DrawContext } from '@tasweerix/render';
 export { captions, parseSubtitles, toSrt, toVtt, type Cue } from '@tasweerix/media';
+export { afx, analyze, AudioAnalysis, tone, sfx, sequenceSynth, noteToHz, renderMix, encodeWav, decodeWav, integratedLoudness, detectBeats, detectOnsets, detectSilence, type EqBand, type Note, type Wave } from '@tasweerix/audio';

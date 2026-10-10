@@ -181,6 +181,8 @@ export function browserEnv(assets: BrowserAssets): Env {
   const cache = new Map<string, Promise<MediaInfo>>();
   return {
     kind: 'browser',
+    loadPcm: async (src, rate, ch) => (await assets.loadPcm(src, rate, ch)).data,
+    loadBinary: (src) => assets.loadBinary(src),
     probe(src) {
       let p = cache.get(src);
       if (!p) {

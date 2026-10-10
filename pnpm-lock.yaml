@@ -18,14 +18,29 @@ importers:
         specifier: ^2.1.8
         version: 2.1.9(@types/node@22.20.5)
 
+  examples/beat-viz:
+    dependencies:
+      tasweerix:
+        specifier: workspace:*
+        version: link:../../packages/tasweerix
+
   examples/smoke:
     dependencies:
       tasweerix:
         specifier: workspace:*
         version: link:../../packages/tasweerix
 
+  packages/audio:
+    dependencies:
+      '@tasweerix/core':
+        specifier: workspace:*
+        version: link:../core
+
   packages/cli:
     dependencies:
+      '@tasweerix/audio':
+        specifier: workspace:*
+        version: link:../audio
       '@tasweerix/core':
         specifier: workspace:*
         version: link:../core
@@ -77,6 +92,9 @@ importers:
 
   packages/tasweerix:
     dependencies:
+      '@tasweerix/audio':
+        specifier: workspace:*
+        version: link:../audio
       '@tasweerix/core':
         specifier: workspace:*
         version: link:../core
