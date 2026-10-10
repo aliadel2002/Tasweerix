@@ -53,6 +53,7 @@ program
       root: o.root,
       motionBlurSamples: o.motionBlurSamples,
       gpu: o.gpu,
+      depth: o.depth,
       renderAudio: renderAudioForExport,
       log: (m) => console.error(m),
       onProgress: (p) => bar.update(p.done, p.total, `${p.fps.toFixed(1)} fps, ETA ${p.eta.toFixed(0)}s`),
@@ -72,8 +73,9 @@ program
   .option('--props <json>', 'input props JSON')
   .option('--root <dir>', 'project root for assets')
   .option('--gpu <mode>', 'auto | on | off (default auto, or TASWEERIX_GPU)')
+  .option('--depth <bits>', '8 | 16: 16-bit png/tiff, 10-bit avif, dithered jpg/webp', parseDepth)
   .action(async (entry: string, o) => {
-    const res = await render({ entry, output: o.output, still: o.frame, comp: o.comp, scale: o.scale, props: parseProps(o.props), root: o.root, gpu: o.gpu, log: (m) => console.error(m) });
+    const res = await render({ entry, output: o.output, still: o.frame, comp: o.comp, scale: o.scale, props: parseProps(o.props), root: o.root, gpu: o.gpu, depth: o.depth, log: (m) => console.error(m) });
     console.error(`✔ ${res.output} (${res.seconds.toFixed(1)}s)`);
   });
 

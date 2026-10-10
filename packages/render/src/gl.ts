@@ -191,8 +191,15 @@ export class GLPipeline {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
   }
 
+  /** Sizes the half-float drawing buffer (`drawingBufferStorage` also sets the canvas size). */
+  private resizeOutput(w: number, h: number) {
+    const gl = this.gl as WebGL2RenderingContext & { drawingBufferStorage(fmt: number, w: number, h: number): void };
+    gl.drawingBufferStorage(gl.RGBA16F, w, h);
+  }
+
   /**
-   * Uploads a canvas / image / bitmap as an RGBA8 texture for filters to read. 8-bit sources lose
+   * Uploads a canvas / image / bitmap as an RGBA8 texture for filters to read (RGBA16F when
+   * compositing at 16 bits, so float16 canvases keep their depth). 8-bit sources lose
    * nothing at RGBA8, so this skips the copy into a pooled float target (one full-frame pass fewer,
    * which matters on software GL). The result has no framebuffer: read it, don't render into it.
    */
@@ -202,7 +209,8 @@ export class GLPipeline {
     const h = height ?? (src as { height: number }).height;
     const tex = gl.createTexture()!;
     gl.bindTexture(gl.TEXTURE_2D, tex);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, src);
+    if (this.floatOutput) gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA16F, gl.RGBA, gl.HALF_FLOAT, src);
+    else gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, src);
     this.texParams();
     const t: Tex = { tex, fbo: null as unknown as WebGLFramebuffer, width: w, height: h, transient: true };
     this.inUse.add(t);
