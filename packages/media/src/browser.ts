@@ -65,6 +65,30 @@ export class BrowserAssets implements AssetProvider {
     return p;
   }
 
+  private images16 = new Map<string, Promise<{ width: number; height: number; data: Uint16Array } | undefined>>();
+
+  /** 16-bit decode through the Tasweerix server (`/__tx/image16`); undefined for 8-bit sources or without a server. */
+  loadImage16(src: string): Promise<{ width: number; height: number; data: Uint16Array } | undefined> {
+    let p = this.images16.get(src);
+    if (!p) {
+      p = (async () => {
+        if (/^(https?:|data:|blob:)/.test(src)) return undefined;
+        let res: Response;
+        try {
+          res = await fetch(`${this.server}/__tx/image16?${new URLSearchParams({ src })}`);
+        } catch {
+          return undefined;
+        }
+        if (res.status !== 200) return undefined;
+        const width = Number(res.headers.get('x-width'));
+        const height = Number(res.headers.get('x-height'));
+        return { width, height, data: new Uint16Array(await res.arrayBuffer()) };
+      })();
+      this.images16.set(src, p);
+    }
+    return p;
+  }
+
   getImage(src: string): Drawable | undefined {
     return this.images.get(src);
   }

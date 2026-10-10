@@ -8,6 +8,11 @@ export type Drawable = CanvasImageSource & { width: number; height: number };
 export interface AssetProvider {
   /** Loads an image (cached). */
   loadImage(src: string): Promise<Drawable>;
+  /**
+   * Decodes a high bit-depth image (16-bit PNG/TIFF, 10-bit video stills) as 16-bit straight RGBA.
+   * Resolves undefined when the source is 8-bit or no decoder is available; use `loadImage` then.
+   */
+  loadImage16?(src: string): Promise<{ width: number; height: number; data: Uint16Array } | undefined>;
   /** Returns an already loaded image. */
   getImage(src: string): Drawable | undefined;
   /** Exact video frame for a source time (seconds). */

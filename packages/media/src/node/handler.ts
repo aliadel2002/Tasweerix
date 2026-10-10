@@ -1,7 +1,7 @@
 import { createReadStream, existsSync, statSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { extname, isAbsolute, normalize, resolve, sep } from 'node:path';
-import { decodePcm, interleave, probe } from './ffmpeg';
+import { decodeImage16, decodePcm, interleave, probe } from './ffmpeg';
 import { FrameServer } from './frames';
 import { AnalysisCache, hostAnalyze } from './analysis';
 import { join } from 'node:path';
@@ -58,7 +58,8 @@ export interface MediaHandlerOptions {
 /**
  * HTTP handler for the /__tx media API used by browser pages:
  *   /__tx/probe?src=   → MediaInfo JSON
- *   /__tx/frame?src=&t=&w=&h=&client=  → raw RGBA (x-width / x-height headers)
+ *   /__tx/frame?src=&t=&w=&h=&client=&depth=  → raw RGBA, or rgba64le with depth=16 (x-width / x-height headers)
+ *   /__tx/image16?src=                 → rgba64le first frame of a high bit-depth source; 204 when the source is 8-bit
  *   /__tx/pcm?src=&rate=&channels=     → interleaved float32 little-endian PCM
  *   /__tx/analyze (GET ?kind=&src=&params= or POST { kind, src, params }) → host analysis JSON
  *   /__tx/cache?key=&src=              → analysis cache (GET / PUT)
@@ -111,9 +112,21 @@ export function createMediaHandler(opts: MediaHandlerOptions) {
         const t = Number(url.searchParams.get('t') ?? 0);
         const w = url.searchParams.get('w');
         const h = url.searchParams.get('h');
-        const f = await frames.frame(file, t, { width: w ? Number(w) : undefined, height: h ? Number(h) : undefined, client: url.searchParams.get('client') ?? '0' });
+        const depth = url.searchParams.get('depth') === '16' ? 16 : 8;
+        const f = await frames.frame(file, t, { width: w ? Number(w) : undefined, height: h ? Number(h) : undefined, client: url.searchParams.get('client') ?? '0', depth });
         res.writeHead(200, { 'content-type': 'application/octet-stream', 'x-width': String(f.width), 'x-height': String(f.height), 'access-control-expose-headers': 'x-width, x-height', 'cache-control': 'no-store' });
         res.end(f.data);
+        return true;
+      }
+      if (url.pathname === '/__tx/image16') {
+        // Only worth the extra bytes when the source has more than 8 bits; the browser decodes the rest.
+        if (((await probe(file)).bitDepth ?? 8) <= 8) {
+          res.writeHead(204, { 'cache-control': 'no-store' }).end();
+          return true;
+        }
+        const img = await decodeImage16(file);
+        res.writeHead(200, { 'content-type': 'application/octet-stream', 'x-width': String(img.width), 'x-height': String(img.height), 'access-control-expose-headers': 'x-width, x-height', 'cache-control': 'no-store' });
+        res.end(img.data);
         return true;
       }
       if (url.pathname === '/__tx/pcm') {

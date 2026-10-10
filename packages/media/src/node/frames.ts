@@ -23,10 +23,16 @@ export class SequentialDecoder {
     readonly width: number,
     readonly height: number,
     readonly fps: number,
+    /** 8 → `rgba` (4 bytes/px); 16 → `rgba64le` (8 bytes/px, keeps 10/12/16-bit sources). */
+    readonly depth: 8 | 16 = 8,
   ) {}
 
   get frameSize(): number {
-    return this.width * this.height * 4;
+    return this.width * this.height * (this.depth === 16 ? 8 : 4);
+  }
+
+  private get pixFmt(): string {
+    return this.depth === 16 ? 'rgba64le' : 'rgba';
   }
 
   private start(t: number) {
@@ -42,8 +48,8 @@ export class SequentialDecoder {
       '-ss', t.toFixed(6),
       '-i', this.file,
       '-an', '-sn', '-dn',
-      '-vf', `fps=${this.fps},scale=${this.width}:${this.height}:flags=bicubic,format=rgba`,
-      '-f', 'rawvideo', '-pix_fmt', 'rgba', '-',
+      '-vf', `fps=${this.fps},scale=${this.width}:${this.height}:flags=bicubic,format=${this.pixFmt}`,
+      '-f', 'rawvideo', '-pix_fmt', this.pixFmt, '-',
     ];
     const p = spawn(FFMPEG, args);
     this.proc = p;
@@ -91,7 +97,7 @@ export class SequentialDecoder {
     return out;
   }
 
-  /** RGBA frame displayed at source time t (seconds). */
+  /** RGBA frame (8- or 16-bit per `depth`) displayed at source time t (seconds). */
   frameAt(t: number): Promise<Buffer> {
     const job = this.queue.then(() => this.frameAtUnqueued(t));
     this.queue = job.catch(() => undefined);
@@ -140,7 +146,7 @@ export class FrameServer {
 
   constructor(private maxIdleMs = 30_000) {}
 
-  async frame(file: string, t: number, opts: { width?: number; height?: number; client?: string } = {}): Promise<{ data: Buffer; width: number; height: number }> {
+  async frame(file: string, t: number, opts: { width?: number; height?: number; client?: string; depth?: 8 | 16 } = {}): Promise<{ data: Buffer; width: number; height: number }> {
     const info = await probe(file);
     const natW = info.width ?? 16;
     const natH = info.height ?? 16;
@@ -156,10 +162,11 @@ export class FrameServer {
     w = Math.max(2, Math.round(w));
     h = Math.max(2, Math.round(h));
     const fps = info.fps && info.fps < 240 ? info.fps : 30;
-    const key = `${file}|${w}x${h}|${opts.client ?? 0}`;
+    const depth = opts.depth ?? 8;
+    const key = `${file}|${w}x${h}|${depth}|${opts.client ?? 0}`;
     let dec = this.decoders.get(key);
     if (!dec) {
-      dec = new SequentialDecoder(file, w, h, fps);
+      dec = new SequentialDecoder(file, w, h, fps, depth);
       this.decoders.set(key, dec);
       this.scheduleCleanup();
     }

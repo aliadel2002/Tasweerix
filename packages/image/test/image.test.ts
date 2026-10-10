@@ -165,4 +165,27 @@ describe('photo node (browser)', () => {
     const [r] = frames[0]!.at(32, 32);
     expect(Math.abs(r - (255 - 64))).toBeLessThanOrEqual(3);
   });
+  it('edits 16-bit sources at full depth', async () => {
+    const dir = join(__dirname, '.tmp');
+    mkdirSync(dir, { recursive: true });
+    // Red ramps across just 2 8-bit levels; a curve stretches that range to full black..white.
+    const w = 256;
+    const raw = Buffer.alloc(w * 2 * 6);
+    for (let i = 0; i < w * 2; i++) {
+      raw.writeUInt16LE(Math.round((0.5 + ((i % w) / (w - 1)) * (2 / 255)) * 65535), i * 6);
+      raw.writeUInt16LE(32768, i * 6 + 2);
+      raw.writeUInt16LE(32768, i * 6 + 4);
+    }
+    execFileSync('ffmpeg', ['-y', '-v', 'error', '-f', 'rawvideo', '-pix_fmt', 'rgb48le', '-s', `${w}x2`, '-i', '-', '-pix_fmt', 'rgb48be', join(dir, 'ramp16.png')], { input: raw });
+    const { frames } = await renderFrames({
+      dir,
+      frames: [0],
+      source: `import { still, photo, op } from 'tasweerix';
+      export default still({ width: ${w}, height: 2 }, (c) => { c.add(photo('ramp16.png', [op.curves({ r: [[0.5, 0], [${0.5 + 2 / 255}, 1]] })], { size: [${w}, 2] })); });`,
+    });
+    // At 8 bits the source has 3 levels, so the stretched result would have a handful of values.
+    const reds = new Set<number>();
+    for (let x = 0; x < w; x++) reds.add(frames[0]!.at(x, 0)[0]);
+    expect(reds.size).toBeGreaterThan(100);
+  });
 });
