@@ -191,11 +191,13 @@ the Messages API, and drive the studio with Playwright. No test needs network ac
   to BT.2020 on export (colors beyond P3 clip). LUT-based ICC profiles on 16-bit sources are read as
   sRGB. `--hdr pq|hlg` renders HDR video and stills in BT.2020; color filters other than grade clip
   wide-gamut colors to sRGB in HDR. There is no RAW decoding.
-- The audio DSP is solid but basic next to dedicated tools, and there is no VST/AU hosting.
+- The audio DSP is solid but basic next to dedicated tools. LV2 and LADSPA plugins run through ffmpeg; VST3, CLAP
+  and AU plugins need an external host executable, which Tasweerix does not ship yet (see [Audio](docs/audio.md#third-party-plugins)).
 - Two-way editing only rewrites values written as literals. Computed values are flagged in the
   inspector and must be edited in code.
 - 3D renders through WebGL2. Up to 4 directional and 4 point lights cast shadows, glTF skins use up
-  to 8 influences per vertex and deform on the CPU, and reflections show the environment map, not
+  to 8 influences per vertex and deform on the CPU, only base color textures are imported from glTF
+  files (normal, metallic-roughness and occlusion maps are not), and reflections show the environment map, not
   other objects in the scene. Without a GPU, large shadow maps and many shadow-casting lights are slow.
 - Stabilization corrects translation, rotation and zoom, perspective (keystone) changes with
   `model: 'perspective'`, and rolling-shutter skew and wobble with `rollingShutter`. Vibration faster
