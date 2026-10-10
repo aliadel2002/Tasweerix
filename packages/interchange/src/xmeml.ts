@@ -1,7 +1,7 @@
 import { parseXml, type XmlNode } from '@tasweerix/core';
 import type { TClip, TKey, TKeyed, TTransform, TimelineModel } from './model';
 import { mapEffect } from './effects';
-import { applyTimeMap, applyTransition, baseName, emptyModel, find, findAll, finishModel, isAudioPath, isImagePath, kid, kids, kidText, textOf, transitionKind, urlToPath, type PlacedClip, type TransitionMark } from './util';
+import { applyEdgeFade, applyTimeMap, applyTransition, baseName, emptyModel, find, findAll, finishModel, isAudioPath, isImagePath, kid, kids, kidText, textOf, transitionKind, urlToPath, type PlacedClip, type TransitionMark } from './util';
 
 const rateOf = (n: XmlNode | undefined): number | undefined => {
   const r = n ? kid(n, 'rate') : undefined;
@@ -31,118 +31,167 @@ export function fromXMEML(text: string): TimelineModel {
   }
   const files = new Map<string, XmlNode>();
   for (const f of findAll(doc, 'file')) if (f.attrs.id && f.children.length) files.set(f.attrs.id, f);
-  const placed: PlacedClip[] = [];
-  const transitions: TransitionMark[] = [];
+  const sequences = new Map<string, XmlNode>();
+  for (const sq of findAll(doc, 'sequence')) if (sq.attrs.id && kid(sq, 'media')) sequences.set(sq.attrs.id, sq);
   const notes = new Set<string>();
 
-  const walkTrack = (track: XmlNode, lane: number, audio: boolean) => {
-    if (/false/i.test(kidText(track, 'enabled') ?? 'TRUE')) return;
-    let cursor = 0;
-    for (const item of kids(track)) {
-      if (item.tag === 'transitionitem') {
-        const r = rateOf(item) ?? fps;
-        transitions.push({ lane, start: num(item, 'start') / r, end: num(item, 'end') / r, type: transitionKind(kidText(find(item, 'effect'), 'name') ?? kidText(find(item, 'effect'), 'effectid')) });
-        continue;
-      }
-      if (item.tag !== 'clipitem' && item.tag !== 'generatoritem') continue;
-      if (/false/i.test(kidText(item, 'enabled') ?? 'TRUE')) continue;
-      const r = rateOf(item) ?? fps;
-      let speed = 1;
-      let gainDb: number | undefined;
-      let titleText: string | undefined;
-      let graph: { when: number; value: number }[] = [];
-      const motion: XmlNode[] = [];
-      const others: XmlNode[] = [];
-      for (const eff of findAll(item, 'effect')) {
-        const id = (kidText(eff, 'effectid') ?? '').toLowerCase();
-        const params = kids(eff, 'parameter');
-        const param = (pid: string) => params.find((p) => (kidText(p, 'parameterid') ?? '').toLowerCase() === pid);
-        if (id === 'timeremap') {
-          const sp = param('speed');
-          if (sp) speed = Number(kidText(sp, 'value') ?? 100) / 100;
-          if (/true/i.test(kidText(param('reverse'), 'value') ?? '')) speed = -speed;
-          if (/^(1|true)$/i.test((kidText(param('variablespeed'), 'value') ?? '').trim())) graph = kids(param('graphdict'), 'keyframe').map((k) => ({ when: num(k, 'when'), value: num(k, 'value') }));
-        } else if (id === 'basic' || id === 'opacity' || id === 'crop') {
-          if (item.tag === 'clipitem' && !audio) motion.push(eff);
-        } else if (id === 'audiolevels') {
-          const lv = Number(kidText(param('level'), 'value'));
-          if (lv > 0) gainDb = +(20 * Math.log10(lv)).toFixed(2);
-        } else if (item.tag === 'generatoritem' && param('str')) titleText = kidText(param('str'), 'value');
-        else if (id && item.tag === 'clipitem' && !audio && (kidText(eff, 'mediatype') ?? 'video') !== 'audio') others.push(eff);
-        else if (id && item.tag === 'clipitem') notes.add(`${kidText(eff, 'name') ?? id} effect on ${kidText(item, 'name')}`);
-      }
-      const inF = num(item, 'in');
-      const outF = num(item, 'out');
-      const srcLen = (outF - inF) / r;
-      const tlLen = Math.abs(speed) > 1e-9 ? srcLen / Math.abs(speed) : srcLen;
-      let start = num(item, 'start', -1);
-      let end = num(item, 'end', -1);
-      start = start >= 0 ? start / r : end >= 0 ? end / r - tlLen : cursor;
-      end = end >= 0 ? end / r : start + tlLen;
-      cursor = end;
-      const name = kidText(item, 'name') ?? 'clip';
-      if (item.tag === 'generatoritem') {
-        if (titleText !== undefined) placed.push({ lane, name, src: '', url: '', kind: 'title', start, duration: end - start, sourceIn: 0, speed: 1, info: {}, text: titleText });
-        else notes.add(`generator ${name}`);
-        continue;
-      }
-      const fileRef = kid(item, 'file') ?? multiclipFile(item, audio, (n) => notes.add(n));
-      const file = fileRef ? (files.get(fileRef.attrs.id ?? '') ?? fileRef) : undefined;
-      const url = kidText(file, 'pathurl') ?? kidText(file, 'name') ?? name;
-      const path = urlToPath(url);
-      const fileMedia = kid(file, 'media');
-      const hasVideo = fileMedia ? !!kid(fileMedia, 'video') : !audio;
-      const hasAudio = fileMedia ? !!kid(fileMedia, 'audio') : audio;
-      const fileDur = num(file, 'duration', 0) / (rateOf(file) ?? r);
-      const kind: PlacedClip['kind'] = audio ? 'audio' : isImagePath(path) ? 'image' : 'video';
-      placed.push({
-        lane,
-        name,
-        src: path,
-        url,
-        kind,
-        start,
-        duration: end - start,
-        sourceIn: inF / r,
-        speed: Math.abs(speed),
-        info: { duration: fileDur || undefined, hasVideo, hasAudio: hasAudio || isAudioPath(path) },
-        gainDb,
-      });
-      const clip = placed[placed.length - 1]!;
-      // Reverse and variable speed become a time map (timeline → source seconds). Graph and keyframe
-      // times count source frames from the media start when they reach the in-point, else clip frames.
-      const base = (whens: number[]) => (whens.length && Math.min(...whens) >= inF - 0.5 ? inF : 0);
-      if (graph.length >= 2 && !audio) {
-        const b = base(graph.map((g) => g.when));
-        applyTimeMap(clip, graph.map((g) => ({ t: start + (g.when - b) / r, v: g.value / r })), notes);
-      } else if (speed < 0) {
-        if (audio) notes.add(`reverse playback on ${name} (imported forward)`);
-        else applyTimeMap(clip, [{ t: start, v: outF / r }, { t: end, v: inF / r }], notes);
-      }
-      const keyTime = (when: number, whens: number[]) => start + (when - base(whens)) / r / (Math.abs(speed) || 1);
-      if (motion.length) clip.transform = motionOf(motion, keyTime, m.width, m.height);
-      for (const eff of others) {
-        const label = kidText(eff, 'name') ?? kidText(eff, 'effectid') ?? 'effect';
-        const params = kids(eff, 'parameter');
-        const scalar = (v: XmlNode | undefined) => (v && !v.children.length && textOf(v) !== '' && Number.isFinite(Number(textOf(v))) ? Number(textOf(v)) : undefined);
-        const reader = (...names: string[]) => {
-          const prm = params.find((x) => names.includes((kidText(x, 'parameterid') ?? '').toLowerCase()) || names.includes((kidText(x, 'name') ?? '').toLowerCase()));
-          return paramValue(prm, scalar, keyTime);
-        };
-        const mapped = mapEffect(label, reader) ?? mapEffect(kidText(eff, 'effectid') ?? '', reader);
-        const where = `${label} effect on ${name}`;
-        if (!mapped) notes.add(where);
-        else {
-          (clip.effects ??= []).push(mapped.effect);
-          if (mapped.approximate) notes.add(`${where} (approximated with fx.${mapped.effect.kind}, check the look)`);
+  /**
+   * Reads a sequence's tracks into clips placed in that sequence's own time. Item start / end
+   * count frames of the sequence's rate; in / out count frames of the item's own rate.
+   */
+  const readSequence = (seq: XmlNode, depth: number): PlacedClip[] => {
+    const placed: PlacedClip[] = [];
+    const transitions: TransitionMark[] = [];
+    const seqRate = rateOf(seq) ?? fps;
+    const media = kid(seq, 'media');
+    const walkTrack = (track: XmlNode, lane: number, audio: boolean) => {
+      if (/false/i.test(kidText(track, 'enabled') ?? 'TRUE')) return;
+      // Premiere splits a stereo clip over "exploded" mono tracks, one per channel: the first one
+      // stands for the clip (Tasweerix plays every channel of the file).
+      if (audio && Number(track.attrs.totalExplodedTrackCount ?? 1) > 1 && Number(track.attrs.currentExplodedTrackIndex ?? 0) > 0) return;
+      let cursor = 0;
+      for (const item of kids(track)) {
+        if (item.tag === 'transitionitem') {
+          const r = rateOf(item) ?? seqRate;
+          transitions.push({ lane, start: num(item, 'start') / r, end: num(item, 'end') / r, type: transitionKind(kidText(find(item, 'effect'), 'name') ?? kidText(find(item, 'effect'), 'effectid')) });
+          continue;
+        }
+        if (item.tag !== 'clipitem' && item.tag !== 'generatoritem') continue;
+        if (/false/i.test(kidText(item, 'enabled') ?? 'TRUE')) continue;
+        const r = rateOf(item) ?? seqRate;
+        let speed = 1;
+        let gainDb: number | undefined;
+        let titleText: string | undefined;
+        let graph: { when: number; value: number }[] = [];
+        const motion: XmlNode[] = [];
+        const others: XmlNode[] = [];
+        for (const eff of ownEffects(item)) {
+          const id = (kidText(eff, 'effectid') ?? '').toLowerCase();
+          const params = kids(eff, 'parameter');
+          const param = (pid: string) => params.find((p) => (kidText(p, 'parameterid') ?? '').toLowerCase() === pid);
+          if (id === 'timeremap') {
+            const sp = param('speed');
+            if (sp) speed = Number(kidText(sp, 'value') ?? 100) / 100;
+            if (/true/i.test(kidText(param('reverse'), 'value') ?? '')) speed = -speed;
+            if (/^(1|true)$/i.test((kidText(param('variablespeed'), 'value') ?? '').trim())) graph = kids(param('graphdict'), 'keyframe').map((k) => ({ when: num(k, 'when'), value: num(k, 'value') }));
+          } else if (id === 'basic' || id === 'opacity' || id === 'crop') {
+            if (item.tag === 'clipitem' && !audio) motion.push(eff);
+          } else if (id === 'audiolevels') {
+            const lv = Number(kidText(param('level'), 'value'));
+            if (lv > 0) gainDb = +(20 * Math.log10(lv)).toFixed(2);
+          } else if (item.tag === 'generatoritem' && param('str')) titleText = kidText(param('str'), 'value');
+          else if (id && item.tag === 'clipitem' && !audio && (kidText(eff, 'mediatype') ?? 'video') !== 'audio') others.push(eff);
+          else if (id && item.tag === 'clipitem') notes.add(`${kidText(eff, 'name') ?? id} effect on ${kidText(item, 'name')}`);
+        }
+        const inF = num(item, 'in');
+        const outF = num(item, 'out');
+        const srcLen = (outF - inF) / r;
+        const tlLen = Math.abs(speed) > 1e-9 ? srcLen / Math.abs(speed) : srcLen;
+        let start = num(item, 'start', -1);
+        let end = num(item, 'end', -1);
+        start = start >= 0 ? start / seqRate : end >= 0 ? end / seqRate - tlLen : cursor;
+        end = end >= 0 ? end / seqRate : start + tlLen;
+        cursor = end;
+        const name = kidText(item, 'name') ?? 'clip';
+        if (item.tag === 'generatoritem') {
+          if (titleText !== undefined) placed.push({ lane, name, src: '', url: '', kind: 'title', start, duration: end - start, sourceIn: 0, speed: 1, info: {}, text: titleText });
+          else notes.add(`generator ${name}`);
+          continue;
+        }
+        // A nested sequence is written in full once and referenced by id afterwards.
+        const nestedRef = kid(item, 'sequence');
+        const nested = nestedRef && !kid(nestedRef, 'media') ? sequences.get(nestedRef.attrs.id ?? '') : nestedRef;
+        if (nested) {
+          // Nested sequence: flatten its clips, shifted to the item and trimmed to its range.
+          if (depth > 16) continue;
+          const shift = start - inF / r;
+          const inner = readSequence(nested, depth + 1);
+          for (const c of inner) {
+            if ((c.kind === 'audio') !== audio) continue;
+            let s = c.start + shift;
+            let e = s + c.duration;
+            if (s < start) {
+              c.sourceIn += (start - s) * c.speed;
+              s = start;
+            }
+            e = Math.min(e, end);
+            if (e - s > 1e-6) placed.push({ ...c, lane, start: s, duration: e - s, timeMap: c.timeMap?.map((p) => ({ t: p.t + shift, v: p.v })) });
+          }
+          if (speed !== 1) notes.add(`speed change on nested sequence ${name} (imported at normal speed)`);
+          continue;
+        }
+        const fileRef = kid(item, 'file') ?? multiclipFile(item, audio, (n) => notes.add(n));
+        const file = fileRef ? (files.get(fileRef.attrs.id ?? '') ?? fileRef) : undefined;
+        const pathurl = kidText(file, 'pathurl');
+        if (!pathurl && kidText(file, 'mediaSource')) {
+          // Premiere slugs, bars and other synthetic media have no file to link.
+          notes.add(`${kidText(file, 'mediaSource')} ${name}`);
+          continue;
+        }
+        if (file && !pathurl && !/[^/\\\s]/.test(kidText(file, 'name') ?? '')) {
+          notes.add(`offline clip ${name} (no media file)`);
+          continue;
+        }
+        const url = pathurl ?? kidText(file, 'name') ?? name;
+        const path = urlToPath(url);
+        const fileMedia = kid(file, 'media');
+        const hasVideo = fileMedia ? !!kid(fileMedia, 'video') : !audio;
+        const hasAudio = fileMedia ? !!kid(fileMedia, 'audio') : audio;
+        const fileDur = num(file, 'duration', 0) / (rateOf(file) ?? r);
+        const kind: PlacedClip['kind'] = audio ? 'audio' : isImagePath(path) ? 'image' : 'video';
+        placed.push({
+          lane,
+          name,
+          src: path,
+          url,
+          kind,
+          start,
+          duration: end - start,
+          sourceIn: inF / r,
+          speed: Math.abs(speed),
+          info: { duration: fileDur || undefined, hasVideo, hasAudio: hasAudio || isAudioPath(path) },
+          gainDb,
+        });
+        const clip = placed[placed.length - 1]!;
+        // Reverse and variable speed become a time map (timeline → source seconds). Graph and keyframe
+        // times count source frames from the media start when they reach the in-point, else clip frames.
+        const base = (whens: number[]) => (whens.length && Math.min(...whens) >= inF - 0.5 ? inF : 0);
+        if (graph.length >= 2 && !audio) {
+          const b = base(graph.map((g) => g.when));
+          applyTimeMap(clip, graph.map((g) => ({ t: start + (g.when - b) / r, v: g.value / r })), notes);
+        } else if (speed < 0) {
+          if (audio) notes.add(`reverse playback on ${name} (imported forward)`);
+          else applyTimeMap(clip, [{ t: start, v: outF / r }, { t: end, v: inF / r }], notes);
+        }
+        const keyTime = (when: number, whens: number[]) => start + (when - base(whens)) / r / (Math.abs(speed) || 1);
+        if (motion.length) clip.transform = motionOf(motion, keyTime, m.width, m.height);
+        for (const eff of others) {
+          const label = kidText(eff, 'name') ?? kidText(eff, 'effectid') ?? 'effect';
+          const params = kids(eff, 'parameter');
+          const scalar = (v: XmlNode | undefined) => (v && !v.children.length && textOf(v) !== '' && Number.isFinite(Number(textOf(v))) ? Number(textOf(v)) : undefined);
+          const reader = (...names: string[]) => {
+            const prm = params.find((x) => names.includes((kidText(x, 'parameterid') ?? '').toLowerCase()) || names.includes((kidText(x, 'name') ?? '').toLowerCase()));
+            return paramValue(prm, scalar, keyTime);
+          };
+          const mapped = mapEffect(label, reader) ?? mapEffect(kidText(eff, 'effectid') ?? '', reader);
+          const where = `${label} effect on ${name}`;
+          if (!mapped) notes.add(where);
+          else {
+            (clip.effects ??= []).push(mapped.effect);
+            if (mapped.approximate) notes.add(`${where} (approximated with fx.${mapped.effect.kind}, check the look)`);
+          }
         }
       }
-    }
+    };
+    kids(kid(media, 'video'), 'track').forEach((t, i) => walkTrack(t, i, false));
+    kids(kid(media, 'audio'), 'track').forEach((t, i) => walkTrack(t, -1 - i, true));
+    // Transitions join clips of this sequence's tracks: resolve them before nested clips move.
+    // A transition with no clip on one side (alignment start-black / end-black) fades from / to black.
+    for (const t of transitions) if (!applyTransition(placed, t) && !applyEdgeFade(placed, t) && t.lane >= 0) notes.add('a transition that is not between two clips');
+    return placed;
   };
 
-  kids(kid(media, 'video'), 'track').forEach((t, i) => walkTrack(t, i, false));
-  kids(kid(media, 'audio'), 'track').forEach((t, i) => walkTrack(t, -1 - i, true));
-  for (const t of transitions) applyTransition(placed, t);
+  const placed = readSequence(seq, 0);
   for (const c of placed) if (c.lane < 0) c.lane = -1 - c.lane;
   for (const mk of kids(seq, 'marker')) m.markers.push({ time: num(mk, 'in') / fps, label: kidText(mk, 'name') || kidText(mk, 'comment') || 'Marker' });
   m.duration = num(seq, 'duration') / fps;
@@ -221,6 +270,15 @@ export function toXMEML(m: TimelineModel): string {
   </sequence>
 </xmeml>
 `;
+}
+
+/** Effects of a clip item, leaving out those inside its file, nested sequence or multiclip. */
+function ownEffects(n: XmlNode, out: XmlNode[] = []): XmlNode[] {
+  for (const c of n.children) {
+    if (c.tag === 'effect') out.push(c);
+    else if (c.tag !== 'file' && c.tag !== 'sequence' && c.tag !== 'multiclip') ownEffects(c, out);
+  }
+  return out;
 }
 
 const pt = (v: XmlNode | undefined): [number, number] | undefined => {

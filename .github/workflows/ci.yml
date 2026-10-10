@@ -31,9 +31,10 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      # FFmpeg for media decode/encode; LibRaw (dcraw_emu) for camera RAW; xmllint validates exported FCPXML.
-      - name: Install FFmpeg, LibRaw and xmllint
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg libraw-bin libxml2-utils
+        # FFmpeg for media decode/encode; LibRaw (dcraw_emu) for camera RAW; xmllint validates exported FCPXML.
+      # Mesa's llvmpipe / lavapipe lets the GPU parity test run Chromium's ANGLE Vulkan and EGL backends without a GPU.
+      - name: Install FFmpeg, LibRaw, xmllint and Mesa
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg libraw-bin libxml2-utils mesa-vulkan-drivers libegl-mesa0 libegl1
 
       # OpenTimelineIO cross-checks exported/imported timelines (those tests skip without it).
       - name: Install OpenTimelineIO

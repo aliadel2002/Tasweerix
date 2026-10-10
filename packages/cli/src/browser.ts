@@ -36,7 +36,7 @@ export interface RenderBrowser {
 const SOFTWARE_GL = /swiftshader|llvmpipe|softpipe|software/i;
 
 /** Chromium flag sets that put headless WebGL on the hardware GPU, most likely to work first. */
-function gpuFlagSets(): string[][] {
+export function gpuFlagSets(): string[][] {
   const common = ['--enable-gpu', '--ignore-gpu-blocklist'];
   if (process.platform === 'darwin') return [[...common, '--use-angle=metal']];
   if (process.platform === 'win32') return [[...common, '--use-angle=d3d11']];
@@ -79,13 +79,15 @@ const chosenFlags = new Map<GpuMode, string[]>();
  * otherwise Chromium falls back to SwiftShader, which works everywhere but is far slower for heavy
  * filter stacks. `TASWEERIX_GPU` sets the default mode.
  */
-export async function launchRenderBrowser(gpu: GpuMode = (process.env.TASWEERIX_GPU as GpuMode | undefined) ?? 'auto'): Promise<RenderBrowser> {
+export async function launchRenderBrowser(gpu: GpuMode = (process.env.TASWEERIX_GPU as GpuMode | undefined) ?? 'auto', flags?: string[]): Promise<RenderBrowser> {
   if (!['auto', 'on', 'off'].includes(gpu)) throw new Error(`GPU mode must be auto, on or off (got "${gpu}")`);
   const open = async (flags: string[]) => {
     const browser = await launchBrowser(flags);
     const renderer = await webglRenderer(browser).catch(() => '');
     return { browser, renderer, gpu: !!renderer && !SOFTWARE_GL.test(renderer), launchAnother: () => launchBrowser(flags) };
   };
+  // Explicit GL flags (tests compare backends) skip the probing.
+  if (flags) return open(flags);
   const known = chosenFlags.get(gpu);
   if (known) return open(known);
   const candidates = gpu === 'off' || (gpu === 'auto' && !mayHaveGpu()) ? [] : gpuFlagSets();

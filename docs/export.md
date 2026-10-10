@@ -105,6 +105,15 @@ Vulkan, then EGL, on Linux, Metal on macOS and D3D11 on Windows, and logs which 
 `--gpu off` forces software rendering, `--gpu on` tries the GPU even where no device node is visible,
 and `TASWEERIX_GPU` sets the default.
 
+`packages/cli/test/gpu-parity.test.ts` renders 2D filter, transition, 16-bit and 3D frames with
+SwiftShader and with every GPU flag set, and fails when a backend differs (below 32 dB PSNR, or more
+than 1% of pixels off by over 24 levels). It runs in `npm test` and skips backends that fall back to
+SwiftShader; with Mesa installed on Linux (`mesa-vulkan-drivers libegl-mesa0`) it exercises the ANGLE
+Vulkan and EGL code paths on llvmpipe. On a machine with a GPU, `npm run gpu-check` runs it (failing
+if no hardware GPU answered), times an export on the GPU and in software, and prints a summary; diff images land in `packages/cli/test/.tmp-gpu/<backend>/`. On ANGLE
+Vulkan a half-float drawing buffer snapshots as blank, so 16-bit exports read the GPU output back
+there instead.
+
 Without a GPU, Chromium renders WebGL with SwiftShader on the CPU. That is correct but slow, and every
 full-frame shader pass costs time. The renderer keeps passes down: consecutive per-pixel filters (grade,
 levels, curves, HSL, LUT, vignette and the like) run as one pass, and the last filter of a layer,
@@ -157,13 +166,16 @@ c.add(await importTimeline('edits/rough-cut.fcpxml', { mediaDir: 'footage' }));
 
 | Format | Read | Write | Notes |
 | --- | --- | --- | --- |
-| FCPXML 1.6–1.11 (`.fcpxml`) | ✓ | ✓ | Spines, connected clips and secondary storylines, compound clips, transitions, retimes, volume, titles, markers |
+| FCPXML 1.6–1.13 (`.fcpxml`) | ✓ | ✓ | Spines, connected clips and secondary storylines, compound, sync and multicam clips, auditions (active pick), transitions, retimes, frame rate conforms, volume, titles, markers; a clip or compound clip exported on its own |
 | OpenTimelineIO (`.otio`) | ✓ | ✓ | Tracks, gaps, transitions, LinearTimeWarp and FreezeFrame, nested stacks, markers |
-| FCP7 XML / xmeml (`.xml`) | ✓ | ✓ | Premiere Pro's exchange format: clip items, transitions, Time Remap, audio levels, text generators |
+| FCP7 XML / xmeml (`.xml`) | ✓ | ✓ | Premiere Pro's exchange format: clip items, transitions, nested sequences, stereo clips on exploded tracks, Time Remap, audio levels, text generators |
 | CMX 3600 EDL (`.edl`) | ✓ | ✓ | Cuts, dissolves and wipes, M2 speed, clip-name comments, LOC markers; pass `--fps` (EDLs store none) |
 
-The readers are tested against files written by OpenTimelineIO's own adapters, and the writers'
-output is read back by them. Plugins can add formats through `importers` and `exporters` (see
+The readers are tested against unchanged exports from Final Cut Pro 10.4 – 11, Premiere Pro and Nuke
+Studio (marker positions are checked against where Final Cut itself shows them, to 1/80 frame) and
+against files written by OpenTimelineIO's own adapters, and the writers' output is read back by
+them. Transitions at the head or tail of a run of clips become opacity fades; synthetic media
+(slugs, bars, mattes, Final Cut generators) and offline clips are listed as not imported. Plugins can add formats through `importers` and `exporters` (see
 [Plugins](plugins.md)); the API is `readTimeline()`, `writeTimeline()`, `timelineToCode()` and
 `timelineToNodes()` in `@tasweerix/interchange`.
 

@@ -51,6 +51,8 @@ export interface RenderOptions {
   hdrPeak?: number;
   /** GPU use for WebGL: 'auto' (default, or TASWEERIX_GPU) uses a hardware GPU when one answers. */
   gpu?: GpuMode;
+  /** Exact Chromium GL flags, overriding `gpu` (used to compare WebGL backends). */
+  glFlags?: string[];
   onProgress?: (p: { done: number; total: number; fps: number; eta: number }) => void;
   log?: (msg: string) => void;
   /** Hook to render audio for the composition; returns a WAV path or undefined. */
@@ -111,7 +113,7 @@ export async function render(opts: RenderOptions): Promise<{ output: string; inf
       onFrameDone?.();
     },
   });
-  const rb = await launchRenderBrowser(opts.gpu);
+  const rb = await launchRenderBrowser(opts.gpu, opts.glFlags);
   const browsers: Browser[] = [rb.browser];
   try {
     log(rb.gpu ? `WebGL on GPU: ${rb.renderer}` : `WebGL in software (${rb.renderer || 'unknown renderer'}): heavy filter stacks render slowly${opts.gpu === 'on' ? '; no GPU answered' : ''}`);

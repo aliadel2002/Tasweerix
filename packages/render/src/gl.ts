@@ -1,6 +1,6 @@
 import type { CanvasGamut } from '@tasweerix/core';
 import type { Surface } from './surface';
-import { createSurface } from './surface';
+import { createSurface, ctx2d, depthSettings, float16Surface } from './surface';
 
 export interface Tex {
   tex: WebGLTexture;
@@ -85,6 +85,11 @@ export class GLPipeline {
    */
   /** True when the GL canvas has a half-float drawing buffer, so `output()` keeps more than 8 bits. */
   readonly floatOutput: boolean;
+  /**
+   * True when snapshots of the half-float drawing buffer come out blank (Chromium on ANGLE Vulkan),
+   * so `snapshot()` reads the pixels back instead.
+   */
+  private readonly readBackOutput: boolean;
 
   /**
    * @param floatOutput half-float drawing buffer and uploads (16-bit compositing).
@@ -114,6 +119,7 @@ export class GLPipeline {
     this.texFormat = useHalf ? { internal: gl.RGBA16F, type: gl.HALF_FLOAT } : { internal: gl.RGBA8, type: gl.UNSIGNED_BYTE };
     this.floatOutput = floatOutput && useHalf && typeof (gl as { drawingBufferStorage?: unknown }).drawingBufferStorage === 'function';
     if (this.floatOutput) this.resizeOutput(width, height);
+    this.readBackOutput = this.floatOutput && !this.snapshotsKeepFloat();
     this.quad = gl.createBuffer()!;
     gl.bindBuffer(gl.ARRAY_BUFFER, this.quad);
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([0, 0, 1, 0, 0, 1, 0, 1, 1, 0, 1, 1]), gl.STATIC_DRAW);
@@ -334,8 +340,36 @@ export class GLPipeline {
 
   private snapshot(): CanvasImageSource & { close?: () => void } {
     const c = this.canvas as OffscreenCanvas;
+    if (this.readBackOutput) {
+      const gl = this.gl;
+      const w = gl.drawingBufferWidth;
+      const h = gl.drawingBufferHeight;
+      const px = new Float32Array(w * h * 4);
+      gl.readPixels(0, 0, w, h, gl.RGBA, gl.FLOAT, px);
+      // Flip rows (GL origin is bottom-left).
+      const row = w * 4;
+      const flipped = new Float32Array(px.length);
+      for (let y = 0; y < h; y++) flipped.set(px.subarray(y * row, (y + 1) * row), (h - 1 - y) * row);
+      return float16Surface(w, h, flipped);
+    }
     if (typeof c.transferToImageBitmap === 'function') return c.transferToImageBitmap();
     return this.canvas;
+  }
+
+  /** Checks that an opaque half-float drawing buffer survives `transferToImageBitmap` and `drawImage`. */
+  private snapshotsKeepFloat(): boolean {
+    const c = this.canvas as OffscreenCanvas;
+    if (typeof c.transferToImageBitmap !== 'function') return true;
+    const gl = this.gl;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.clearColor(0, 0.5, 1, 1);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.clearColor(0, 0, 0, 0);
+    const bitmap = c.transferToImageBitmap();
+    const ctx = ctx2d(createSurface(1, 1), depthSettings(16));
+    ctx.drawImage(bitmap, 0, 0);
+    bitmap.close();
+    return ctx.getImageData(0, 0, 1, 1).data[3]! > 0;
   }
 
   /** Reads back pixels (RGBA8, top-left origin). */
