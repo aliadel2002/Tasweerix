@@ -1,6 +1,7 @@
 import { parseXml, type MediaInfo, type XmlNode } from '@tasweerix/core';
-import type { TimelineModel } from './model';
-import { applyTransition, baseName, emptyModel, find, finishModel, isAudioPath, isImagePath, kid, kids, textOf, transitionKind, urlToPath, type PlacedClip, type TransitionMark } from './util';
+import type { TEffect, TKey, TKeyed, TTransform, TimelineModel } from './model';
+import { mapEffect } from './effects';
+import { applyTimeMap, applyTransition, baseName, emptyModel, find, findAll, finishModel, isAudioPath, isImagePath, kid, kids, textOf, transitionKind, urlToPath, type PlacedClip, type TransitionMark } from './util';
 
 /** Parses an FCPXML rational time ("1001/30000s", "5s", "0s"). */
 export function fcpTime(v: string | undefined): number {
@@ -21,6 +22,21 @@ interface Asset {
   info: MediaInfo;
 }
 
+const HANDLED_ADJUSTMENTS = new Set(['adjust-volume', 'adjust-conform', 'adjust-transform', 'adjust-crop', 'adjust-blend']);
+
+/** Parses "x y" pairs. */
+const pair = (v: string | undefined): [number, number] | undefined => {
+  if (!v) return undefined;
+  const [x, y] = v.trim().split(/\s+/).map(Number);
+  return Number.isFinite(x) && Number.isFinite(y) ? [x!, y!] : undefined;
+};
+
+/** FCPXML keyframe interpolation → Tasweerix easing. */
+const easeOf = (interp: string | undefined): string | undefined => (interp === 'ease' ? 'inOutSine' : interp === 'easeIn' ? 'inSine' : interp === 'easeOut' ? 'outSine' : undefined);
+
+/** A single number ("20", "-3.5"); vectors and colors are not numeric parameters. */
+const num1 = (v: string): number | undefined => (/^\s*-?\d+(\.\d+)?(e-?\d+)?\s*$/i.test(v) ? Number(v) : undefined);
+
 const STORY = new Set(['asset-clip', 'clip', 'video', 'audio', 'gap', 'title', 'ref-clip', 'sync-clip', 'mc-clip', 'spine', 'transition', 'generator', 'live-drawing']);
 
 /**
@@ -35,8 +51,10 @@ export function fromFCPXML(text: string): TimelineModel {
   const formats = new Map<string, XmlNode>();
   const assets = new Map<string, Asset>();
   const media = new Map<string, XmlNode>();
+  const effectNames = new Map<string, string>();
   for (const r of kids(resources)) {
     const id = r.attrs.id ?? '';
+    if (r.tag === 'effect') effectNames.set(id, r.attrs.name ?? '');
     if (r.tag === 'format') formats.set(id, r);
     else if (r.tag === 'media') media.set(id, r);
     else if (r.tag === 'asset') {
@@ -81,14 +99,19 @@ export function fromFCPXML(text: string): TimelineModel {
   const transitions: TransitionMark[] = [];
   const notes = new Set<string>();
 
-  const linearSpeed = (el: XmlNode): { speed: number; sourceAt: (t: number) => number } | null => {
+  /** The time map of a retimed element: element-local time → value in its content's time. */
+  const timeMapOf = (el: XmlNode): { t: number; v: number }[] | null => {
     const map = kid(el, 'timeMap');
     if (!map) return null;
     const pts = kids(map, 'timept').map((p) => ({ t: fcpTime(p.attrs.time), v: fcpTime(p.attrs.value) }));
-    if (pts.length < 2) return null;
+    return pts.length >= 2 ? pts : null;
+  };
+
+  const linearSpeed = (el: XmlNode): { speed: number; sourceAt: (t: number) => number } | null => {
+    const pts = timeMapOf(el);
+    if (!pts) return null;
     const a = pts[0]!;
     const b = pts[pts.length - 1]!;
-    if (pts.length > 2) notes.add(`variable speed ramp on ${el.attrs.name ?? el.tag} (imported as constant speed)`);
     const speed = b.t > a.t ? (b.v - a.v) / (b.t - a.t) : 1;
     return { speed, sourceAt: (t) => a.v + (t - a.t) * speed };
   };
@@ -110,13 +133,13 @@ export function fromFCPXML(text: string): TimelineModel {
 
   const unsupportedChildren = (el: XmlNode) => {
     for (const c of kids(el)) {
-      if (c.tag === 'filter-video' || c.tag === 'filter-audio') notes.add(`${c.attrs.name ?? c.tag} effect on ${el.attrs.name ?? el.tag}`);
-      else if (c.tag.startsWith('adjust-') && c.tag !== 'adjust-volume' && c.tag !== 'adjust-conform') notes.add(`${c.tag} on ${el.attrs.name ?? el.tag}`);
+      if (c.tag === 'filter-audio') notes.add(`${c.attrs.name ?? c.tag} effect on ${el.attrs.name ?? el.tag}`);
+      else if (c.tag.startsWith('adjust-') && !HANDLED_ADJUSTMENTS.has(c.tag)) notes.add(`${c.tag} on ${el.attrs.name ?? el.tag}`);
     }
   };
 
   /** Adds a media clip that references an asset. `sourceIn` is in the asset's own timecode. */
-  const addAsset = (el: XmlNode, ref: string, lane: number, start: number, duration: number, sourceStart: number, forceAudio = false) => {
+  const addAsset = (el: XmlNode, ref: string, lane: number, start: number, duration: number, sourceStart: number, forceAudio = false, retimed?: { el: XmlNode; toGlobal: (t: number) => number; toAsset: (v: number) => number }) => {
     const asset = assets.get(ref);
     if (!asset) {
       notes.add(`missing asset ${ref} (${el.attrs.name ?? el.tag})`);
@@ -143,6 +166,109 @@ export function fromFCPXML(text: string): TimelineModel {
       gainDb: gainOf(el),
       withAudio: kind === 'video' && asset.hasAudio && srcEnable !== 'video' && el.attrs.audioRole !== 'none',
     });
+    const pts = retimed && timeMapOf(retimed.el);
+    if (pts && pts.length > 2 && kind !== 'image') {
+      const added = placed[placed.length - 1]!;
+      applyTimeMap(added, pts.map((p) => ({ t: retimed.toGlobal(p.t), v: retimed.toAsset(p.v) - asset.start })), notes);
+      if (added.timeMap && kind === 'audio') {
+        notes.add(`variable speed ramp on audio ${added.name} (imported at its average speed)`);
+        added.timeMap = undefined;
+      }
+    }
+  };
+
+  /** Video filters of an element (color corrections included) as Tasweerix filters. */
+  const effectsOf = (el: XmlNode, toGlobal: (t: number) => number): TEffect[] | undefined => {
+    const out: TEffect[] = [];
+    for (const f of kids(el, 'filter-video')) {
+      const name = f.attrs.name ?? effectNames.get(f.attrs.ref ?? '') ?? 'effect';
+      const where = `${name} effect on ${el.attrs.name ?? el.tag}`;
+      if (f.attrs.enabled === '0') continue;
+      // Parameters can nest (Color Board groups them); match them by name anywhere inside.
+      const params = findAll(f, 'param');
+      const reader = (...names: string[]): TKeyed<number> | undefined => {
+        const param = params.find((x) => names.includes((x.attrs.name ?? '').toLowerCase().trim()));
+        return param ? paramOf(param, 'value', num1, toGlobal) : undefined;
+      };
+      const mapped = mapEffect(name, reader);
+      if (!mapped) notes.add(where);
+      else {
+        out.push(mapped.effect);
+        if (mapped.approximate) notes.add(`${where} (approximated with fx.${mapped.effect.kind}, check the look)`);
+      }
+    }
+    return out.length ? out : undefined;
+  };
+
+  /** Reads a parameter's static value or keyframes (times in element-local time). */
+  const paramOf = <T>(adj: XmlNode, name: string, parse: (v: string) => T | undefined, toGlobal: (t: number) => number): TKeyed<T> | undefined => {
+    const param = adj.tag === 'param' ? adj : kids(adj, 'param').find((p) => p.attrs.name === name);
+    const anim = kid(param, 'keyframeAnimation');
+    const keys: TKey<T>[] = [];
+    for (const k of kids(anim, 'keyframe')) {
+      const v = parse(k.attrs.value ?? '');
+      if (v !== undefined) keys.push({ t: toGlobal(fcpTime(k.attrs.time)), v, ease: easeOf(k.attrs.interp) });
+    }
+    if (keys.length > 1) return keys;
+    if (keys.length === 1) return keys[0]!.v;
+    const attr = param?.attrs.value ?? (adj.tag === 'param' ? undefined : adj.attrs[name]);
+    return attr === undefined ? undefined : parse(attr);
+  };
+
+  /**
+   * Spatial adjustments of an element. FCPXML measures distances in percent of the frame height,
+   * with y pointing up and rotation counterclockwise.
+   */
+  const transformOf = (el: XmlNode, toGlobal: (t: number) => number): TTransform | undefined => {
+    const x: TTransform = {};
+    const unit = m.height / 100;
+    const toPx = (p: [number, number]): [number, number] => [p[0] * unit + 0, -p[1] * unit + 0];
+    const num = (v: string) => (Number.isFinite(parseFloat(v)) ? parseFloat(v) : undefined);
+    const mapKeyed = <A, B>(k: TKeyed<A> | undefined, f: (a: A) => B): TKeyed<B> | undefined =>
+      k === undefined ? undefined : Array.isArray(k) && typeof k[0] === 'object' && !Array.isArray(k[0]) ? (k as TKey<A>[]).map((q) => ({ ...q, v: f(q.v) })) : f(k as A);
+    const tr = kid(el, 'adjust-transform');
+    if (tr) {
+      const position = mapKeyed(paramOf(tr, 'position', pair, toGlobal), toPx);
+      const scale = paramOf(tr, 'scale', pair, toGlobal);
+      const rotation = mapKeyed(paramOf(tr, 'rotation', num, toGlobal), (r) => -r);
+      const anchor = pair(tr.attrs.anchor);
+      if (position !== undefined && !isZero(position)) x.position = position;
+      if (scale !== undefined && !isValue(scale, [1, 1])) x.scale = scale;
+      if (rotation !== undefined && !isValue(rotation, 0)) x.rotation = rotation;
+      if (anchor && (anchor[0] || anchor[1])) x.anchor = toPx(anchor);
+    }
+    const blend = kid(el, 'adjust-blend');
+    if (blend) {
+      const opacity = paramOf(blend, 'amount', num, toGlobal);
+      if (opacity !== undefined && !isValue(opacity, 1)) x.opacity = opacity;
+      if (blend.attrs.mode && blend.attrs.mode !== '0' && !/normal/i.test(blend.attrs.mode)) notes.add(`blend mode ${blend.attrs.mode} on ${el.attrs.name ?? el.tag}`);
+    }
+    const crop = kid(el, 'adjust-crop');
+    if (crop) {
+      const mode = crop.attrs.mode ?? 'trim';
+      const rect = kid(crop, mode === 'crop' ? 'crop-rect' : 'trim-rect');
+      if (mode === 'pan' || kid(crop, 'pan-rect')) notes.add(`Ken Burns crop on ${el.attrs.name ?? el.tag}`);
+      else if (rect) {
+        // Edges in percent of the frame height, as fractions of the (frame-fitted) picture.
+        const e = (k: string, size: number) => Math.min(0.49, Math.max(0, (parseFloat(rect.attrs[k] ?? '0') || 0) * unit / size));
+        const c = { left: e('left', m.width), right: e('right', m.width), top: e('top', m.height), bottom: e('bottom', m.height) };
+        if (kids(rect, 'param').length) notes.add(`animated crop on ${el.attrs.name ?? el.tag} (imported at its first value)`);
+        if (c.left + c.right + c.top + c.bottom > 1e-6) {
+          x.crop = c;
+          if (mode === 'crop') {
+            // Crop mode scales the remaining region up to fill the frame, around its center.
+            const k = Math.min(1 / (1 - c.left - c.right), 1 / (1 - c.top - c.bottom));
+            const center: [number, number] = [((c.left - c.right) / 2) * m.width, ((c.top - c.bottom) / 2) * m.height];
+            x.anchor = [center[0] + (x.anchor?.[0] ?? 0), center[1] + (x.anchor?.[1] ?? 0)];
+            const s = x.scale ?? [1, 1];
+            x.scale = Array.isArray(s) && typeof s[0] === 'object' ? (s as TKey<[number, number]>[]).map((q) => ({ ...q, v: [q.v[0] * k, q.v[1] * k] as [number, number] })) : [(s as [number, number])[0] * k, (s as [number, number])[1] * k];
+          }
+        }
+      }
+    }
+    const conform = kid(el, 'adjust-conform')?.attrs.type;
+    if (conform === 'fill' || conform === 'none') x.conform = conform;
+    return Object.keys(x).length ? x : undefined;
   };
 
   /**
@@ -185,14 +311,18 @@ export function fromFCPXML(text: string): TimelineModel {
         walkChildren(el, (t) => toGlobal(offset + t), lane, true);
         return;
       case 'asset-clip':
-        unsupportedChildren(el);
-        addAsset(el, el.attrs.ref ?? '', lane, g0, duration, localStart);
-        break;
       case 'video':
-      case 'audio':
+      case 'audio': {
         unsupportedChildren(el);
-        addAsset(el, el.attrs.ref ?? '', lane, g0, duration, localStart, el.tag === 'audio');
+        const before = placed.length;
+        addAsset(el, el.attrs.ref ?? '', lane, g0, duration, localStart, el.tag === 'audio', { el, toGlobal: local, toAsset: (v) => v });
+        const added = placed[before];
+        if (added && added.kind !== 'audio') {
+          added.transform = transformOf(el, local);
+          added.effects = effectsOf(el, local);
+        }
         break;
+      }
       case 'clip': {
         unsupportedChildren(el);
         // The clip's own content: a video (with audio) or audio element in the clip's local time.
@@ -205,11 +335,16 @@ export function fromFCPXML(text: string): TimelineModel {
           // Source time at the clip's start: the content's start plus how far into it the clip begins.
           const retime = linearSpeed(el);
           const before = placed.length;
-          addAsset(content, content.attrs.ref ?? '', lane, g0, duration, cStart + (localStart - cOff) * (retime?.speed ?? 1), content.tag === 'audio');
+          addAsset(content, content.attrs.ref ?? '', lane, g0, duration, cStart + (localStart - cOff) * (retime?.speed ?? 1), content.tag === 'audio', { el, toGlobal: local, toAsset: (v) => cStart + (v - cOff) });
           const added = placed[before];
           if (added) {
             added.name = el.attrs.name ?? added.name;
-            if (retime) added.speed = retime.speed;
+            if (retime && !added.timeMap) added.speed = retime.speed;
+            if (added.kind !== 'audio') {
+              added.transform = transformOf(el, local) ?? transformOf(content, local);
+              added.effects = [...(effectsOf(content, local) ?? []), ...(effectsOf(el, local) ?? [])];
+              if (!added.effects.length) added.effects = undefined;
+            }
             added.gainDb ??= gainOf(el);
             // A sibling audio element of a video clip carries its sound.
             if (added.kind === 'video' && kids(el).some((c) => c.tag === 'audio' && c.attrs.lane === undefined)) added.withAudio = true;
@@ -221,7 +356,7 @@ export function fromFCPXML(text: string): TimelineModel {
         const t = kids(el, 'text')
           .map((x) => textOf(x))
           .join('\n');
-        placed.push({ lane, name: el.attrs.name ?? 'Title', src: '', url: '', kind: 'title', start: g0, duration, sourceIn: 0, speed: 1, info: {}, text: t || el.attrs.name || 'Title' });
+        placed.push({ lane, name: el.attrs.name ?? 'Title', src: '', url: '', kind: 'title', start: g0, duration, sourceIn: 0, speed: 1, info: {}, text: t || el.attrs.name || 'Title', transform: transformOf(el, local), effects: effectsOf(el, local) });
         break;
       }
       case 'ref-clip':
@@ -237,17 +372,46 @@ export function fromFCPXML(text: string): TimelineModel {
         } else {
           for (const c of kids(el).filter((x) => STORY.has(x.tag) && x.attrs.lane === undefined)) walkElement(c, local, lane);
         }
-        const end = g0 + duration;
-        for (const c of placed.splice(before)) {
-          let s = c.start;
-          let e = c.start + c.duration;
-          if (s < g0) {
-            c.sourceIn += (g0 - s) * c.speed;
-            s = g0;
-          }
-          e = Math.min(e, end);
-          if (e - s > 1e-6) placed.push({ ...c, start: s, duration: e - s });
+        trimToWindow(placed.splice(before), g0, g0 + duration);
+        break;
+      }
+      case 'mc-clip': {
+        // Multicam clip: the active video angle's pictures and the active audio angle's sound.
+        const mres = media.get(el.attrs.ref ?? '');
+        const multicam = mres ? kid(mres, 'multicam') : undefined;
+        if (!multicam) {
+          notes.add(`multicam clip without angles: ${el.attrs.name ?? ''}`);
+          break;
         }
+        const angles = kids(multicam, 'mc-angle');
+        const sources = kids(el, 'mc-source');
+        const active = (kind: 'video' | 'audio') => {
+          if (!sources.length) return angles[0];
+          const src = sources.find((x) => (x.attrs.srcEnable ?? 'all') === 'all' || x.attrs.srcEnable === kind);
+          return src ? angles.find((a) => a.attrs.angleID === src.attrs.angleID) : undefined;
+        };
+        const videoAngle = active('video');
+        const audioAngle = active('audio');
+        const walkAngle = (angle: XmlNode | undefined) => {
+          const before = placed.length;
+          for (const c of kids(angle).filter((x) => STORY.has(x.tag) && x.attrs.lane === undefined)) walkElement(c, local, lane);
+          return placed.splice(before);
+        };
+        const out: PlacedClip[] = [];
+        for (const c of walkAngle(videoAngle)) {
+          if (c.kind === 'audio') {
+            if (audioAngle === videoAngle) out.push(c);
+          } else out.push({ ...c, withAudio: audioAngle === videoAngle && c.withAudio });
+        }
+        if (audioAngle && audioAngle !== videoAngle) {
+          for (const c of walkAngle(audioAngle)) {
+            if (c.kind === 'audio') out.push(c);
+            else if (c.kind === 'video' && c.withAudio) out.push({ ...c, kind: 'audio', lane: c.lane >= 0 ? -1 : c.lane, withAudio: undefined, transform: undefined, effects: undefined, timeMap: undefined });
+          }
+        }
+        const unused = angles.length - new Set([videoAngle, audioAngle].filter(Boolean)).size;
+        if (unused > 0) notes.add(`${unused} inactive angle${unused > 1 ? 's' : ''} of multicam ${el.attrs.name ?? ''} (only the active angles are imported)`);
+        trimToWindow(out, g0, g0 + duration);
         break;
       }
       case 'gap':
@@ -260,10 +424,30 @@ export function fromFCPXML(text: string): TimelineModel {
     walkChildren(el, local, lane, false);
   };
 
+  /** Keeps the parts of flattened clips inside [g0, end] (compound and multicam clips). */
+  function trimToWindow(clips: PlacedClip[], g0: number, end: number) {
+    for (const c of clips) {
+      let s = c.start;
+      let e = c.start + c.duration;
+      if (s < g0) {
+        c.sourceIn += (g0 - s) * c.speed;
+        s = g0;
+      }
+      e = Math.min(e, end);
+      if (e - s > 1e-6) placed.push({ ...c, start: s, duration: e - s });
+    }
+  }
+
   const spine = kid(sequence, 'spine');
   if (spine) walkChildren(spine, (t) => t, 0, true);
   for (const t of transitions) if (!applyTransition(placed, t)) notes.add('a transition that is not between two clips');
   m.duration = fcpTime(sequence.attrs.duration);
   m.unsupported = [...notes];
   return finishModel(m, placed);
+}
+
+const isZero = (k: TKeyed<[number, number]>): boolean => !Array.isArray(k[0]) && typeof k[0] !== 'object' && (k as [number, number])[0] === 0 && (k as [number, number])[1] === 0;
+function isValue<T>(k: TKeyed<T>, v: T): boolean {
+  if (Array.isArray(k) && typeof k[0] === 'object' && !Array.isArray(k[0])) return false;
+  return JSON.stringify(k) === JSON.stringify(v);
 }

@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE fcpxml>
+<fcpxml version="1.10">
+  <resources>
+    <format id="r1" name="FFVideoFormat1080p25" frameDuration="100/2500s" width="1920" height="1080"/>
+    <asset id="r2" name="A" start="0s" duration="60s" hasVideo="1" hasAudio="1" format="r1">
+      <media-rep kind="original-media" src="file:///Media/A.mov"/>
+    </asset>
+    <asset id="r3" name="B" start="0s" duration="60s" hasVideo="1" format="r1">
+      <media-rep kind="original-media" src="file:///Media/B.mov"/>
+    </asset>
+  </resources>
+  <library>
+    <event name="Event">
+      <project name="Moves">
+        <sequence format="r1" duration="12s" tcStart="0s" tcFormat="NDF">
+          <spine>
+            <asset-clip ref="r2" offset="0s" name="Picture in picture" start="10s" duration="4s">
+              <adjust-crop mode="trim"><trim-rect left="9" right="0" top="5" bottom="0"/></adjust-crop>
+              <adjust-transform position="20 10" scale="0.5 0.5" rotation="90"/>
+              <adjust-blend amount="0.8"/>
+            </asset-clip>
+            <asset-clip ref="r3" offset="4s" name="Push in" start="0s" duration="4s">
+              <adjust-transform>
+                <param name="position">
+                  <keyframeAnimation>
+                    <keyframe time="0s" value="0 0"/>
+                    <keyframe time="2s" value="-10 0" interp="ease"/>
+                  </keyframeAnimation>
+                </param>
+                <param name="scale" value="1.5 1.5"/>
+              </adjust-transform>
+            </asset-clip>
+            <asset-clip ref="r2" offset="8s" name="Ramp" start="20s" duration="4s">
+              <timeMap>
+                <timept time="20s" value="20s" interp="linear"/>
+                <timept time="22s" value="22s" interp="linear"/>
+                <timept time="24s" value="23s" interp="linear"/>
+              </timeMap>
+            </asset-clip>
+          </spine>
+        </sequence>
+      </project>
+    </event>
+  </library>
+</fcpxml>
