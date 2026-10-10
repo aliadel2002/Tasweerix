@@ -30,6 +30,8 @@ Studio (browser)   Export workers (headless Chromium) ──RGBA──► FFmpeg
   canvases and GL output in Display P3 (ICC profiles are read and written by `@tasweerix/core`'s
   `icc.ts` and `@tasweerix/media`'s `node/icc.ts`). `--hdr` composites in extended-range sRGB float16
   canvases (1.0 = 203-nit white) and the encoder converts frames to BT.2020 PQ or HLG (`core/hdr.ts`).
+  Camera RAW is developed on the server by LibRaw's `dcraw_emu` into linear BT.2020 (`media/node/raw.ts`)
+  and served through the same path as other high bit-depth stills.
 - **Media.** Video frames are decoded by FFmpeg processes that stream sequentially per worker, which
   makes them frame-exact (the tests verify this out of order). The studio uses the same API, so the
   preview matches the export.

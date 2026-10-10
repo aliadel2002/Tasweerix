@@ -31,9 +31,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      # FFmpeg for media decode/encode; xmllint validates exported FCPXML.
-      - name: Install FFmpeg and xmllint
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg libxml2-utils
+      # FFmpeg for media decode/encode; LibRaw (dcraw_emu) for camera RAW; xmllint validates exported FCPXML.
+      - name: Install FFmpeg, LibRaw and xmllint
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg libraw-bin libxml2-utils
 
       # OpenTimelineIO cross-checks exported/imported timelines (those tests skip without it).
       - name: Install OpenTimelineIO

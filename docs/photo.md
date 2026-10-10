@@ -35,6 +35,27 @@ on both paths (the server handles matrix/TRC profiles such as Display P3, Adobe 
 Rec. 2020; LUT-based profiles fall back to sRGB with a warning). With `--gamut p3` the ops work on
 Display P3 pixels, so a P3 photo keeps its range from file to export.
 
+## Camera RAW
+
+`photo('IMG_0042.CR3', ops)` and `image('scene.dng')` accept camera RAW files (DNG, CR2, CR3, NEF,
+ARW, RAF, ORF, RW2, PEF and the other formats LibRaw reads). The server develops them with LibRaw's
+`dcraw_emu`, which you install alongside FFmpeg (`apt install libraw-bin`, `brew install libraw`, or
+point `TASWEERIX_DCRAW_EMU` at it):
+
+- Demosaic, the camera's color matrix and its as-shot white balance, with orientation applied.
+- No tone curve and no auto brightening: the result is linear light in BT.2020 where the sensor's
+  white level is 1.0. Use `op.adjust({ exposure })` to place it; RAWs usually want +0.5 to +1.
+- 16 bits through the ops at any `--depth`, so the photo keeps the sensor's range until export.
+  With `--gamut p3` it keeps P3 colors, and with `--hdr` pushed exposure lands above white instead
+  of clipping, so highlights the sensor caught become HDR highlights.
+
+```ts
+photo('raw/IMG_0042.CR3', [op.adjust({ exposure: 0.7, shadows: 0.3 }), op.toneMap()])
+```
+
+`op.toneMap({ knee, white })` rolls off highlights above 1.0 toward white for SDR output after a
+strong exposure push.
+
 ## Operations (`op`)
 
 | Group | Operations |
@@ -43,6 +64,7 @@ Display P3 pixels, so a P3 photo keeps its range from file to export.
 | Tone and color | `autoLevels`, `autoWhiteBalance`, `adjust` (exposure, brightness, contrast, highlights, shadows, whites, blacks, saturation, vibrance, temperature, tint, hue, gamma), `curves`, `hsl` (per hue range) |
 | Detail | `sharpen`, `clarity`, `dehaze`, `denoise` (bilateral), `dust` (median), `blur` |
 | Retouch | `heal` (texture from source, tone from destination), `clone`, `redEye`, `vignette` |
+| HDR | `toneMap({ knee, white })` |
 | Custom | `op.custom(kind, params)` after `registerPhotoOp(kind, fn)` |
 
 Every tone, detail and retouch op accepts `{ mask }`.

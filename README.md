@@ -51,7 +51,8 @@ tasweerix studio .                                # live editor with two-way edi
 ## Quick start
 
 Requirements: Node ≥ 20, pnpm, FFmpeg/ffprobe on `PATH`, and a Chromium for exports (Playwright's is
-detected automatically, or set `TASWEERIX_CHROMIUM`).
+detected automatically, or set `TASWEERIX_CHROMIUM`). Camera RAW files also need LibRaw's `dcraw_emu`
+(`libraw-bin` on Debian and Ubuntu, `libraw` on Homebrew).
 
 ```sh
 pnpm install
@@ -190,7 +191,8 @@ the Messages API, and drive the studio with Playwright. No test needs network ac
 - Wide gamut is opt in too: `--gamut p3` composites in Display P3, `--gamut rec2020` converts that
   to BT.2020 on export (colors beyond P3 clip). LUT-based ICC profiles on 16-bit sources are read as
   sRGB. `--hdr pq|hlg` renders HDR video and stills in BT.2020; color filters other than grade clip
-  wide-gamut colors to sRGB in HDR. There is no RAW decoding.
+  wide-gamut colors to sRGB in HDR. Camera RAW needs LibRaw's `dcraw_emu` and uses the camera's
+  as-shot white balance with LibRaw's default demosaic; there are no lens corrections.
 - The audio DSP is solid but basic next to dedicated tools. LV2 and LADSPA plugins run through ffmpeg; VST3, CLAP
   and AU plugins need an external host executable, which Tasweerix does not ship yet (see [Audio](docs/audio.md#third-party-plugins)).
 - Two-way editing only rewrites values written as literals. Computed values are flagged in the

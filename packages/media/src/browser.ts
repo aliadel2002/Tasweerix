@@ -1,5 +1,6 @@
 import { hashSeed, type CanvasGamut, type Env, type MediaInfo } from '@tasweerix/core';
 import { float16Surface, halfSurface, type AssetProvider, type Drawable } from '@tasweerix/render';
+import { isRawPath } from './formats';
 
 export interface BrowserAssetOptions {
   /** Base URL that relative asset paths are resolved against. */
@@ -78,8 +79,8 @@ export class BrowserAssets implements AssetProvider {
     let p = this.pendingImages.get(src);
     if (!p) {
       p = (async () => {
-        // Float and HDR stills (OpenEXR, Radiance) need the server at any depth: browsers can't decode them.
-        if (this.depth === 16 || /\.(exr|hdr)$/i.test(src)) {
+        // Float and HDR stills (OpenEXR, Radiance) and camera RAW need the server at any depth: browsers can't decode them.
+        if (this.depth === 16 || /\.(exr|hdr)$/i.test(src) || isRawPath(src)) {
           const hi = await this.loadImage16(src);
           if (hi) {
             const s = (hi.format === 'rgba-float16' ? halfSurface(hi.width, hi.height, hi.data) : float16Surface(hi.width, hi.height, hi.data, hi.colorSpace)) as Drawable;
@@ -117,6 +118,8 @@ export class BrowserAssets implements AssetProvider {
         } catch {
           return undefined;
         }
+        // RAW has no browser fallback, so its decode error (such as LibRaw missing) is the useful one.
+        if (res.status !== 200 && isRawPath(src)) throw new Error(`Failed to decode ${src}: ${await res.text()}`);
         if (res.status !== 200) return undefined;
         const width = Number(res.headers.get('x-width'));
         const height = Number(res.headers.get('x-height'));

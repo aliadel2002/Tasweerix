@@ -1,3 +1,4 @@
+import { isRawPath } from '../formats';
 import { spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { convertRGBA16, gamutProfile, parseIcc, type CanvasGamut, type Gamut, type IccProfile, type MediaInfo } from '@tasweerix/core';
@@ -120,6 +121,11 @@ export function probe(file: string): Promise<MediaInfo> {
   let p = probeCache.get(file);
   if (!p) {
     p = (async () => {
+      if (isRawPath(file)) {
+        const { probeRaw } = await import('./raw');
+        const r = await probeRaw(file);
+        return { width: r.width, height: r.height, hasVideo: true, hasAudio: false, codec: 'raw', bitDepth: 16 };
+      }
       const out = await run(FFPROBE, ['-v', 'error', '-print_format', 'json', '-show_streams', '-show_format', file]);
       const j = JSON.parse(out.toString()) as {
         streams: { codec_type: string; codec_name?: string; pix_fmt?: string; width?: number; height?: number; r_frame_rate?: string; avg_frame_rate?: string; duration?: string; sample_rate?: string; channels?: number; tags?: Record<string, string>; side_data_list?: { rotation?: number }[]; color_primaries?: string; color_transfer?: string; disposition?: { attached_pic?: number } }[];

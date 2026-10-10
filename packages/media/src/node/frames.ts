@@ -173,9 +173,10 @@ export class SequentialDecoder {
 
 /**
  * Converts linear float `gbrap` planes (1.0 = reference white) to what the browser composites:
- * extended-sRGB half floats for an HDR render, or tone-mapped 8- or 16-bit RGBA in `gamut`.
+ * extended-sRGB half floats for an HDR render, or tone-mapped 8- or 16-bit RGBA in `gamut`
+ * (`toneMap: false` clips instead, for sources whose white is already 1.0).
  */
-export function linearPlanesToFrame(planes: Buffer, n: number, src: Gamut, opts: { depth?: 8 | 16; gamut?: CanvasGamut; hdr?: boolean }): { data: Buffer; colorSpace: CanvasGamut; format: 'rgba' | 'rgba64le' | 'rgba-float16' } {
+export function linearPlanesToFrame(planes: Buffer, n: number, src: Gamut, opts: { depth?: 8 | 16; gamut?: CanvasGamut; hdr?: boolean; toneMap?: boolean }): { data: Buffer; colorSpace: CanvasGamut; format: 'rgba' | 'rgba64le' | 'rgba-float16' } {
   const f = new Float32Array(planes.buffer.slice(planes.byteOffset, planes.byteOffset + n * 16));
   const target: CanvasGamut = opts.hdr ? 'srgb' : (opts.gamut ?? 'srgb');
   const m = gamutMatrix(src, target);
@@ -192,7 +193,8 @@ export function linearPlanesToFrame(planes: Buffer, n: number, src: Gamut, opts:
       o16[i * 4 + 3] = floatToHalf(a);
       continue;
     }
-    [R, G, B] = toneMapLinear(Math.max(0, R), Math.max(0, G), Math.max(0, B));
+    if (opts.toneMap !== false) [R, G, B] = toneMapLinear(Math.max(0, R), Math.max(0, G), Math.max(0, B));
+    else [R, G, B] = [Math.max(0, R), Math.max(0, G), Math.max(0, B)];
     const enc = [extendedLinearToSrgb(R), extendedLinearToSrgb(G), extendedLinearToSrgb(B), a];
     if (depth === 16) for (let k = 0; k < 4; k++) o16[i * 4 + k] = Math.round(Math.min(1, enc[k]!) * 65535);
     else for (let k = 0; k < 4; k++) out[i * 4 + k] = Math.round(Math.min(1, enc[k]!) * 255);

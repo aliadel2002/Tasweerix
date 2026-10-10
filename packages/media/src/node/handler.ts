@@ -5,6 +5,7 @@ import type { CanvasGamut } from '@tasweerix/core';
 import { decodeImage16, decodeImageLinear, decodePcm, interleave, isHdrSource, probe } from './ffmpeg';
 import { FrameServer, linearPlanesToFrame } from './frames';
 import { AnalysisCache, hostAnalyze } from './analysis';
+import { decodeRaw, isRawPath } from './raw';
 import { join } from 'node:path';
 
 export const MIME: Record<string, string> = {
@@ -120,6 +121,15 @@ export function createMediaHandler(opts: MediaHandlerOptions) {
         return true;
       }
       if (url.pathname === '/__tx/image16') {
+        if (isRawPath(file)) {
+          // Camera RAW: developed linear by LibRaw, kept above white in HDR, not tone mapped in SDR
+          // (the sensor's white level is 1.0, so nothing needs compressing).
+          const raw = await decodeRaw(file);
+          const f = linearPlanesToFrame(raw.planes, raw.width * raw.height, raw.gamut, { depth: 16, gamut: gamutParam(url), hdr: url.searchParams.get('hdr') === '1', toneMap: false });
+          res.writeHead(200, { ...pixelHeaders(raw.width, raw.height, f.colorSpace, f.format), 'cache-control': 'no-store' });
+          res.end(f.data);
+          return true;
+        }
         const info = await probe(file);
         if (isHdrSource(info)) {
           // HDR stills (PQ / HLG, OpenEXR, Radiance): half floats for an HDR render, tone mapped otherwise.
