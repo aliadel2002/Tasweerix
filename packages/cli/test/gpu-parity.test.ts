@@ -132,7 +132,7 @@ describe('GPU export renders like the software renderer', () => {
   });
 
   it('matches on every other GL backend', async (ctx) => {
-    if (process.env.TASWEERIX_GPU_TEST === 'require') expect(backends.filter((b) => b.hardware).map((b) => b.renderer), 'no hardware GPU answered').not.toEqual([]);
+    if (process.env.TASWEERIX_GPU_TEST === 'require') expect.soft(backends.filter((b) => b.hardware).map((b) => b.renderer), 'no hardware GPU answered').not.toEqual([]);
     if (!backends.length) ctx.skip();
     const report: string[] = [];
     for (const b of backends) {

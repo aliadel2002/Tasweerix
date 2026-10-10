@@ -56,8 +56,8 @@ and `TASWEERIX_GPU` sets the default.
 SwiftShader and with every GPU flag set, and fails when a backend differs (below 32 dB PSNR, or more
 than 1% of pixels off by over 24 levels). It runs in `npm test` and skips backends that fall back to
 SwiftShader; with Mesa installed on Linux (`mesa-vulkan-drivers libegl-mesa0`) it exercises the ANGLE
-Vulkan and EGL code paths on llvmpipe. On a machine with a GPU, `npm run test:gpu` runs it and fails
-if no hardware GPU answered; diff images land in `packages/cli/test/.tmp-gpu/<backend>/`. On ANGLE
+Vulkan and EGL code paths on llvmpipe. On a machine with a GPU, `npm run gpu-check` runs it (failing
+if no hardware GPU answered), times an export on the GPU and in software, and prints a summary; diff images land in `packages/cli/test/.tmp-gpu/<backend>/`. On ANGLE
 Vulkan a half-float drawing buffer snapshots as blank, so 16-bit exports read the GPU output back
 there instead.
 
