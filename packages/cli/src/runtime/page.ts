@@ -25,6 +25,10 @@ interface InitOptions {
   scale?: number;
   client: number;
   motionBlurSamples?: number;
+  /** Node kinds to leave out (graphics-only layers for interchange). */
+  hide?: string[];
+  /** Force a transparent background. */
+  transparentBackground?: boolean;
 }
 
 let comp: Composition;
@@ -52,6 +56,8 @@ window.__tx = {
     const def = pickDefinition(opts.comp);
     comp = await def.create({ props: opts.props });
     renderer = new Renderer({ assets, scale: opts.scale ?? comp.scale, motionBlurSamples: opts.motionBlurSamples });
+    if (opts.hide) renderer.skipKinds = new Set(opts.hide);
+    if (opts.transparentBackground) comp.background = null;
     await renderer.prepare(comp);
     await document.fonts.ready;
     ws = new WebSocket(`ws://${location.host}/__tx/ws?client=${opts.client}`);

@@ -29,6 +29,9 @@ export interface RenderOptions {
   /** Skip audio muxing. */
   muted?: boolean;
   motionBlurSamples?: number;
+  /** Node kinds to leave out of the render. */
+  hide?: string[];
+  transparentBackground?: boolean;
   onProgress?: (p: { done: number; total: number; fps: number; eta: number }) => void;
   log?: (msg: string) => void;
   /** Hook to render audio for the composition; returns a WAV path or undefined. */
@@ -90,7 +93,7 @@ export async function render(opts: RenderOptions): Promise<{ output: string; inf
   const browser = await launchBrowser();
   try {
     const first = await browser.newPage();
-    const baseInit = { comp: opts.comp, props: opts.props, scale: opts.scale, motionBlurSamples: opts.motionBlurSamples };
+    const baseInit = { comp: opts.comp, props: opts.props, scale: opts.scale, motionBlurSamples: opts.motionBlurSamples, hide: opts.hide, transparentBackground: opts.transparentBackground };
     const info = await openPage(first, `${server.url}/`, { ...baseInit, client: 0 });
     log(`${info.name}: ${info.outWidth}x${info.outHeight} @ ${info.fps}fps, ${info.frameCount} frames (${info.duration.toFixed(2)}s)`);
 

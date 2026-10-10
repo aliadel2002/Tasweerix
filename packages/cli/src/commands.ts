@@ -159,6 +159,36 @@ export function registerCommands(program: Command): void {
     });
 
   program
+    .command('export-timeline')
+    .description('Export the edit as FCPXML (Final Cut Pro / DaVinci Resolve) or OpenTimelineIO for finishing in a pro editor')
+    .argument('<entry>')
+    .option('-f, --format <fmt>', 'fcpxml | otio', 'fcpxml')
+    .option('-o, --output <file>', 'output file')
+    .option('-c, --comp <name>')
+    .option('--root <dir>', 'project root for assets')
+    .option('--graphics', 'also render non-media layers (shapes, text, effects) as a ProRes 4444 alpha clip on the top track')
+    .action(async (entry: string, o) => {
+      const { buildTimelineModel, toFCPXML, toOTIO } = await import('@tasweerix/interchange');
+      const { pathToFileURL } = await import('node:url');
+      const { comp, root } = await loadComposition(entry, { comp: o.comp, root: o.root });
+      const toUrl = (src: string) => (/^https?:/.test(src) ? src : pathToFileURL(resolve(root, src)).href);
+      const model = buildTimelineModel(comp, toUrl);
+      const out = resolve(o.output ?? `out/${(comp.name || 'timeline').replace(/[^\w-]+/g, '-')}.${o.format === 'otio' ? 'otio' : 'fcpxml'}`);
+      mkdirSync(dirname(out), { recursive: true });
+      if (o.graphics && model.unsupported.length) {
+        const gfx = out.replace(/\.[^.]+$/, '.graphics.mov');
+        console.error(`Rendering graphics layer → ${gfx}`);
+        await render({ entry, root, output: gfx, comp: o.comp, codec: 'prores', transparent: true, transparentBackground: true, hide: ['video', 'image', 'photo'], muted: true, concurrency: 2 });
+        const { probe: probeFile } = await import('@tasweerix/media/node');
+        const info = await probeFile(gfx);
+        model.video.push({ kind: 'video', clips: [{ name: 'Tasweerix graphics', src: relative(root, gfx), url: pathToFileURL(gfx).href, kind: 'video', start: 0, duration: comp.duration, sourceIn: 0, speed: 1, info, withAudio: false }] });
+      }
+      writeFileSync(out, o.format === 'otio' ? toOTIO(model) : toFCPXML(model));
+      console.error(`✔ ${out} — ${model.video.reduce((n, t) => n + t.clips.length, 0)} video clips on ${model.video.length} tracks, ${model.audio.reduce((n, t) => n + t.clips.length, 0)} audio clips`);
+      if (model.unsupported.length && !o.graphics) console.error(`  not representable (use --graphics to render them): ${model.unsupported.slice(0, 6).join('; ')}${model.unsupported.length > 6 ? ' …' : ''}`);
+    });
+
+  program
     .command('inspect')
     .description('Print the composition tree as JSON (timing, props, audio)')
     .argument('<entry>')

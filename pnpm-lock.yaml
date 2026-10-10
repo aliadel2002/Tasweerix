@@ -104,6 +104,9 @@ importers:
       '@tasweerix/illustrate':
         specifier: workspace:*
         version: link:../illustrate
+      '@tasweerix/interchange':
+        specifier: workspace:*
+        version: link:../interchange
       '@tasweerix/media':
         specifier: workspace:*
         version: link:../media
@@ -167,6 +170,16 @@ importers:
       '@tasweerix/core':
         specifier: workspace:*
         version: link:../core
+      '@tasweerix/render':
+        specifier: workspace:*
+        version: link:../render
+
+  packages/interchange:
+    dependencies:
+      '@tasweerix/core':
+        specifier: workspace:*
+        version: link:../core
+    devDependencies:
       '@tasweerix/render':
         specifier: workspace:*
         version: link:../render

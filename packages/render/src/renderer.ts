@@ -87,6 +87,8 @@ export class Renderer {
   /** Per-frame cache for drawers. */
   frameCache = new Map<string, unknown>();
   comp?: Composition;
+  /** Node kinds to skip when rendering (e.g. media, to export a graphics-only layer). */
+  skipKinds = new Set<string>();
   private compStack: Composition[] = [];
 
   constructor(opts: RendererOptions) {
@@ -241,7 +243,7 @@ export class Renderer {
   }
 
   renderNode(node: SceneNode, parentCtx: FrameContext, target: Ctx2D, parentMatrix: Mat2D, alpha: number): void {
-    if (!node.activeAt(parentCtx.time)) return;
+    if (!node.activeAt(parentCtx.time) || this.skipKinds.has(node.kind)) return;
     const local = node.localCtx(parentCtx);
     const props = node.evaluate(local) as Record<string, any> & BaseProps;
     if (!props.visible || props.opacity <= 0) return;

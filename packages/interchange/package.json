@@ -1,0 +1,18 @@
+{
+  "name": "@tasweerix/interchange",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Tasweerix timeline interchange: export cut-based edits to FCPXML (Final Cut Pro, DaVinci Resolve, Premiere via XtoCC) and OpenTimelineIO.",
+  "license": "MIT",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@tasweerix/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@tasweerix/render": "workspace:*"
+  }
+}
