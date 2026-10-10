@@ -139,7 +139,12 @@ export function adjust(b: Bitmap, p: AdjustParams, mask?: Mask): Bitmap {
 
 export function curves(b: Bitmap, p: { rgb?: [number, number][]; r?: [number, number][]; g?: [number, number][]; b?: [number, number][] }, mask?: Mask): Bitmap {
   const [all, cr, cg, cb] = [p.rgb, p.r, p.g, p.b].map((x) => curveTable(x));
-  const lut = (t: Float32Array, v: number) => t[Math.min(255, Math.max(0, Math.round(v * 255)))]!;
+  // Linear interpolation between table entries, so the output is not limited to 256 levels.
+  const lut = (t: Float32Array, v: number) => {
+    const f = Math.min(1, Math.max(0, v)) * 255;
+    const i = Math.min(254, Math.floor(f));
+    return t[i]! + (t[i + 1]! - t[i]!) * (f - i);
+  };
   return mapPixels(b, (r, g, bl) => [lut(cr!, lut(all!, r)), lut(cg!, lut(all!, g)), lut(cb!, lut(all!, bl))], mask);
 }
 

@@ -339,7 +339,12 @@ export function curveTable(points: [number, number][] | undefined): Float32Array
 
 const CURVES_FRAG = frag(`
 uniform sampler2D uCurve;
-float cv(float x, float row) { return texture(uCurve, vec2((clamp(x, 0.0, 1.0) * 255.0 + 0.5) / 256.0, (row + 0.5) / 4.0)).r; }
+// Linear interpolation between table entries (the texture is NEAREST-filtered).
+float cv(float x, float row) {
+  float f = clamp(x, 0.0, 1.0) * 255.0;
+  int i = int(floor(f));
+  return mix(texelFetch(uCurve, ivec2(i, int(row)), 0).r, texelFetch(uCurve, ivec2(min(i + 1, 255), int(row)), 0).r, f - float(i));
+}
 void main(){
   vec4 c = texture(uTex, vUv);
   vec3 v = vec3(cv(c.r, 0.0), cv(c.g, 0.0), cv(c.b, 0.0));
@@ -470,7 +475,14 @@ registerFilter(
     uLight: color4(p.light, '#ffd166'),
   })),
 );
-const GRADMAP_FRAG = frag(`uniform sampler2D uMap; void main(){ vec4 c = texture(uTex, vUv); vec3 m = texture(uMap, vec2(clamp(luma(c.rgb), 0.0, 1.0) * (255.0/256.0) + 0.5/256.0, 0.5)).rgb; outColor = vec4(m, c.a); }`);
+const GRADMAP_FRAG = frag(`uniform sampler2D uMap;
+void main(){
+  vec4 c = texture(uTex, vUv);
+  float f = clamp(luma(c.rgb), 0.0, 1.0) * 255.0;
+  int i = int(floor(f));
+  vec3 m = mix(texelFetch(uMap, ivec2(i, 0), 0).rgb, texelFetch(uMap, ivec2(min(i + 1, 255), 0), 0).rgb, f - float(i));
+  outColor = vec4(m, c.a);
+}`);
 registerFilter('gradientMap', {
   apply(input, p, fc) {
     const stops: [number, string][] = (p.stops ?? [[0, '#000'], [1, '#fff']]).map((s: string | [number, string], i: number, arr: unknown[]) =>

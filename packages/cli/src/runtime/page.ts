@@ -55,7 +55,8 @@ window.__tx = {
     setEnv(browserEnv(assets));
     const def = pickDefinition(opts.comp);
     comp = await def.create({ props: opts.props });
-    renderer = new Renderer({ assets, scale: opts.scale ?? comp.scale, motionBlurSamples: opts.motionBlurSamples });
+    // Half-float GPU intermediates: export runs on software GL, where 'auto' would pick 8-bit and band.
+    renderer = new Renderer({ assets, scale: opts.scale ?? comp.scale, motionBlurSamples: opts.motionBlurSamples, glPrecision: 'half' });
     if (opts.hide) renderer.skipKinds = new Set(opts.hide);
     if (opts.transparentBackground) comp.background = null;
     await renderer.prepare(comp);
