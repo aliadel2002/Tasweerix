@@ -54,7 +54,6 @@ program
       motionBlurSamples: o.motionBlurSamples,
       depth: o.depth,
       gpu: o.gpu,
-      depth: o.depth,
       renderAudio: renderAudioForExport,
       log: (m) => console.error(m),
       onProgress: (p) => bar.update(p.done, p.total, `${p.fps.toFixed(1)} fps, ETA ${p.eta.toFixed(0)}s`),
