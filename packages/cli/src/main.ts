@@ -3,12 +3,18 @@ import { resolve } from 'node:path';
 import { probe } from '@tasweerix/media/node';
 import { render } from './render';
 import { progressBar } from './progress';
+import type { Gamut } from '@tasweerix/core';
 import type { Codec } from './encode';
 
 const program = new Command();
 program.name('tasweerix').description('Code-first video, audio, photo and motion graphics').version('0.1.0');
 
 const parseProps = (s?: string) => (s ? (JSON.parse(s) as Record<string, unknown>) : undefined);
+const parseGamut = (s: string): Gamut => {
+  const g = ({ srgb: 'srgb', p3: 'display-p3', 'display-p3': 'display-p3', rec2020: 'rec2020', '2020': 'rec2020' } as Record<string, Gamut>)[s.toLowerCase()];
+  if (!g) throw new Error(`--gamut must be srgb, p3 or rec2020, got "${s}"`);
+  return g;
+};
 const parseDepth = (s: string): 8 | 16 => {
   if (s !== '8' && s !== '16') throw new Error(`--depth must be 8 or 16, got "${s}"`);
   return Number(s) as 8 | 16;
@@ -33,6 +39,7 @@ program
   .option('--root <dir>', 'project root for assets')
   .option('--motion-blur-samples <n>', 'sub-frame samples for motion blur', Number)
   .option('--depth <bits>', '8 | 16: composite at 16 bits; 10-bit h265/av1/vp9/prores, 16-bit png, dithered 8-bit otherwise', parseDepth)
+  .option('--gamut <space>', 'srgb | p3 | rec2020: composite in Display P3 and tag the video (gif/webp/apng stay sRGB)', parseGamut)
   .action(async (entry: string, o) => {
     const bar = progressBar('Rendering');
     const range = o.range ? (o.range.split('-').map(Number) as [number, number]) : undefined;
@@ -53,6 +60,7 @@ program
       root: o.root,
       motionBlurSamples: o.motionBlurSamples,
       depth: o.depth,
+      gamut: o.gamut,
       gpu: o.gpu,
       renderAudio: renderAudioForExport,
       log: (m) => console.error(m),
@@ -74,8 +82,9 @@ program
   .option('--root <dir>', 'project root for assets')
   .option('--gpu <mode>', 'auto | on | off (default auto, or TASWEERIX_GPU)')
   .option('--depth <bits>', '8 | 16: 16-bit png/tiff, 10-bit avif, dithered jpg/webp', parseDepth)
+  .option('--gamut <space>', 'srgb | p3 | rec2020: composite in Display P3, embed an ICC profile (png/jpg/webp/tiff) or tag avif', parseGamut)
   .action(async (entry: string, o) => {
-    const res = await render({ entry, output: o.output, still: o.frame, comp: o.comp, scale: o.scale, props: parseProps(o.props), root: o.root, gpu: o.gpu, depth: o.depth, log: (m) => console.error(m) });
+    const res = await render({ entry, output: o.output, still: o.frame, comp: o.comp, scale: o.scale, props: parseProps(o.props), root: o.root, gpu: o.gpu, depth: o.depth, gamut: o.gamut, log: (m) => console.error(m) });
     console.error(`✔ ${res.output} (${res.seconds.toFixed(1)}s)`);
   });
 

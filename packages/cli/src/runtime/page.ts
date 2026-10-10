@@ -33,6 +33,8 @@ interface InitOptions {
   transparentBackground?: boolean;
   /** 16: composite in float16 and send rgba64le frames (8 bytes per pixel). Default 8. */
   depth?: 8 | 16;
+  /** Compositing color space; frames are sent in it. Default 'srgb'. */
+  gamut?: 'srgb' | 'display-p3';
 }
 
 let comp: Composition;
@@ -57,12 +59,13 @@ function pickDefinition(name?: string): CompositionDefinition {
 window.__tx = {
   async init(opts) {
     depth = opts.depth ?? 8;
-    const assets = new BrowserAssets({ baseUrl: `${location.origin}/project/`, server: location.origin, video: 'server', clientId: opts.client, depth });
+    const gamut = opts.gamut ?? 'srgb';
+    const assets = new BrowserAssets({ baseUrl: `${location.origin}/project/`, server: location.origin, video: 'server', clientId: opts.client, depth, gamut });
     setEnv(browserEnv(assets));
     const def = pickDefinition(opts.comp);
     comp = await def.create({ props: opts.props });
     // Half-float GPU intermediates: export runs on software GL, where 'auto' would pick 8-bit and band.
-    renderer = new Renderer({ assets, scale: opts.scale ?? comp.scale, motionBlurSamples: opts.motionBlurSamples, glPrecision: 'half', depth });
+    renderer = new Renderer({ assets, scale: opts.scale ?? comp.scale, motionBlurSamples: opts.motionBlurSamples, glPrecision: 'half', depth, gamut });
     if (opts.hide) renderer.skipKinds = new Set(opts.hide);
     if (opts.transparentBackground) comp.background = null;
     await renderer.prepare(comp);
@@ -85,6 +88,7 @@ window.__tx = {
       frameCount: comp.frameCount,
       transparent: comp.background === null,
       depth,
+      gamut,
     };
   },
   async frame(n) {

@@ -1,5 +1,19 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
-import { FFMPEG, probe } from './ffmpeg';
+import type { CanvasGamut, Gamut } from '@tasweerix/core';
+import { FFMPEG, primariesGamut, probe } from './ffmpeg';
+
+const ZSCALE_PRIMARIES: Record<Gamut, string> = { srgb: 'bt709', 'display-p3': 'smpte432', rec2020: 'bt2020' };
+
+/**
+ * Picks the decode for a video's tagged primaries: wide-gamut SDR sources are converted to
+ * `target` by zscale, everything else is passed through as sRGB. HDR transfers are left alone.
+ */
+export function videoGamut(primaries: string | undefined, transfer: string | undefined, target: CanvasGamut): { filter: string; colorSpace: CanvasGamut } {
+  const src = primariesGamut(primaries);
+  if (!src || src === 'srgb' || transfer === 'smpte2084' || transfer === 'arib-std-b67') return { filter: '', colorSpace: 'srgb' };
+  if (src === target) return { filter: '', colorSpace: target };
+  return { filter: `zscale=primariesin=${ZSCALE_PRIMARIES[src]}:primaries=${ZSCALE_PRIMARIES[target]}:transferin=bt709:transfer=bt709,`, colorSpace: target };
+}
 
 /**
  * Sequential video decoder: keeps an ffmpeg process streaming RGBA frames from a start time, so
@@ -25,6 +39,8 @@ export class SequentialDecoder {
     readonly fps: number,
     /** 8 → `rgba` (4 bytes/px); 16 → `rgba64le` (8 bytes/px, keeps 10/12/16-bit sources). */
     readonly depth: 8 | 16 = 8,
+    /** Filters run before scaling, e.g. a gamut conversion from `videoGamut`. */
+    readonly prefilter = '',
   ) {}
 
   get frameSize(): number {
@@ -48,7 +64,7 @@ export class SequentialDecoder {
       '-ss', t.toFixed(6),
       '-i', this.file,
       '-an', '-sn', '-dn',
-      '-vf', `fps=${this.fps},scale=${this.width}:${this.height}:flags=bicubic,format=${this.pixFmt}`,
+      '-vf', `${this.prefilter}fps=${this.fps},scale=${this.width}:${this.height}:flags=bicubic,format=${this.pixFmt}`,
       '-f', 'rawvideo', '-pix_fmt', this.pixFmt, '-',
     ];
     const p = spawn(FFMPEG, args);
@@ -146,7 +162,8 @@ export class FrameServer {
 
   constructor(private maxIdleMs = 30_000) {}
 
-  async frame(file: string, t: number, opts: { width?: number; height?: number; client?: string; depth?: 8 | 16 } = {}): Promise<{ data: Buffer; width: number; height: number }> {
+  /** A frame, with `colorSpace` naming the space its pixels are in (converted toward `gamut` when the source is wide gamut). */
+  async frame(file: string, t: number, opts: { width?: number; height?: number; client?: string; depth?: 8 | 16; gamut?: CanvasGamut } = {}): Promise<{ data: Buffer; width: number; height: number; colorSpace: CanvasGamut }> {
     const info = await probe(file);
     const natW = info.width ?? 16;
     const natH = info.height ?? 16;
@@ -163,14 +180,15 @@ export class FrameServer {
     h = Math.max(2, Math.round(h));
     const fps = info.fps && info.fps < 240 ? info.fps : 30;
     const depth = opts.depth ?? 8;
-    const key = `${file}|${w}x${h}|${depth}|${opts.client ?? 0}`;
+    const g = videoGamut(info.colorPrimaries, info.colorTransfer, opts.gamut ?? 'srgb');
+    const key = `${file}|${w}x${h}|${depth}|${g.colorSpace}|${opts.client ?? 0}`;
     let dec = this.decoders.get(key);
     if (!dec) {
-      dec = new SequentialDecoder(file, w, h, fps, depth);
+      dec = new SequentialDecoder(file, w, h, fps, depth, g.filter);
       this.decoders.set(key, dec);
       this.scheduleCleanup();
     }
-    return { data: await dec.frameAt(t), width: w, height: h };
+    return { data: await dec.frameAt(t), width: w, height: h, colorSpace: g.colorSpace };
   }
 
   private scheduleCleanup() {

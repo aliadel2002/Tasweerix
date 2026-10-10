@@ -8,6 +8,7 @@ import {
   resolve,
   SceneNode,
   type BaseProps,
+  type CanvasGamut,
   type FilterSpec,
   type FrameContext,
   type Mat2D,
@@ -17,7 +18,7 @@ import type { AssetProvider } from './assets';
 import { canSharePass, fusePointStages, getFilter, LUMA_TO_ALPHA, MIX_FRAG, type FilterContext, type FilterImpl, type PointStage } from './filters';
 import { GLPipeline, type Tex } from './gl';
 import { toCanvasPaint } from './paint';
-import { createSurface, ctx2d, depthSettings, readRGBA16, SurfacePool, type Ctx2D, type Depth, type Surface } from './surface';
+import { createSurface, ctx2d, depthSettings, gamutSettings, readRGBA16, SurfacePool, type Ctx2D, type Depth, type Surface } from './surface';
 
 /** Everything a drawer needs to draw one node's own content. */
 export interface DrawContext {
@@ -67,6 +68,11 @@ export interface RendererOptions {
    * grades keep more than 8 bits until `pixels16()`. Chromium only; default 8.
    */
   depth?: Depth;
+  /**
+   * Color space of the 2D canvases and GL output. 'display-p3' keeps colors outside sRGB (P3 sources,
+   * `color(display-p3 ...)` paints); sRGB content is converted into it. Default 'srgb'.
+   */
+  gamut?: CanvasGamut;
 }
 
 const BLEND: Record<string, GlobalCompositeOperation> = {
@@ -84,6 +90,7 @@ export class Renderer {
   motionBlurSamples: number;
   glPrecision: 'auto' | 'half' | 'byte';
   readonly depth: Depth;
+  readonly gamut: CanvasGamut;
   canvas: Surface;
   ctx: Ctx2D;
   private pool: SurfacePool;
@@ -104,12 +111,13 @@ export class Renderer {
     this.depth = opts.depth ?? 8;
     this.glPrecision = this.depth === 16 ? 'half' : (opts.glPrecision ?? 'auto');
     this.canvas = opts.canvas ?? createSurface(1, 1);
-    this.ctx = ctx2d(this.canvas, depthSettings(this.depth));
-    this.pool = new SurfacePool(1, 1, this.depth);
+    this.gamut = opts.gamut ?? 'srgb';
+    this.ctx = ctx2d(this.canvas, depthSettings(this.depth, this.gamut));
+    this.pool = new SurfacePool(1, 1, this.depth, this.gamut);
   }
 
   get gl(): GLPipeline {
-    if (!this._gl) this._gl = new GLPipeline(1, 1, this.glPrecision, this.depth === 16);
+    if (!this._gl) this._gl = new GLPipeline(1, 1, this.glPrecision, this.depth === 16, this.gamut);
     return this._gl;
   }
 
@@ -153,7 +161,7 @@ export class Renderer {
     if (this.canvas.width !== w || this.canvas.height !== h) {
       this.canvas.width = w;
       this.canvas.height = h;
-      this.ctx = ctx2d(this.canvas, depthSettings(this.depth));
+      this.ctx = ctx2d(this.canvas, depthSettings(this.depth, this.gamut));
     }
     this.pool.resize(w, h);
     const ctx = comp.contextAt(frame, props);
@@ -174,14 +182,14 @@ export class Renderer {
     return this.canvas;
   }
 
-  /** Reads the last rendered frame. */
+  /** Reads the last rendered frame (in `gamut`). */
   pixels(): ImageData {
-    return this.ctx.getImageData(0, 0, this.canvas.width, this.canvas.height);
+    return this.ctx.getImageData(0, 0, this.canvas.width, this.canvas.height, gamutSettings(this.gamut));
   }
 
   /** Reads the last rendered frame as 16-bit straight RGBA (full precision when `depth` is 16). */
   pixels16(): Uint16Array {
-    if (this.depth === 16) return readRGBA16(this.ctx, this.canvas.width, this.canvas.height);
+    if (this.depth === 16) return readRGBA16(this.ctx, this.canvas.width, this.canvas.height, this.gamut);
     const d = this.pixels().data;
     const out = new Uint16Array(d.length);
     for (let i = 0; i < d.length; i++) out[i] = d[i]! * 257;

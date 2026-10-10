@@ -28,7 +28,7 @@ export async function closeTestBrowser(): Promise<void> {
  * Renders frames of an entry (file path or inline source) in headless Chromium and returns pixels.
  * Used by tests across packages.
  */
-export async function renderFrames(opts: { entry?: string; source?: string; dir?: string; root?: string; frames: number[]; scale?: number; comp?: string; props?: Record<string, unknown>; depth?: 8 | 16 }): Promise<{ info: Record<string, any>; frames: RenderedFrame[]; json: Record<string, unknown> }> {
+export async function renderFrames(opts: { entry?: string; source?: string; dir?: string; root?: string; frames: number[]; scale?: number; comp?: string; props?: Record<string, unknown>; depth?: 8 | 16; gamut?: 'srgb' | 'display-p3' }): Promise<{ info: Record<string, any>; frames: RenderedFrame[]; json: Record<string, unknown> }> {
   let entry = opts.entry;
   if (!entry) {
     const dir = opts.dir ?? join(process.cwd(), '.tasweerix-test');
@@ -46,7 +46,7 @@ export async function renderFrames(opts: { entry?: string; source?: string; dir?
   try {
     await page.goto(`${server.url}/`);
     await page.waitForFunction(() => !!(window as any).__tx || !!(window as any).__txError, null, { timeout: 30_000 });
-    const info = (await page.evaluate((o) => (window as any).__tx.init(o), { client: 0, scale: opts.scale, comp: opts.comp, props: opts.props, depth: opts.depth })) as Record<string, any>;
+    const info = (await page.evaluate((o) => (window as any).__tx.init(o), { client: 0, scale: opts.scale, comp: opts.comp, props: opts.props, depth: opts.depth, gamut: opts.gamut })) as Record<string, any>;
     for (const f of opts.frames) await page.evaluate((n) => (window as any).__tx.frame(n), f);
     const json = (await page.evaluate(() => (window as any).__tx.json())) as Record<string, unknown>;
     const t0 = Date.now();

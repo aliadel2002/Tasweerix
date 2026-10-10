@@ -45,6 +45,31 @@ Float16 keeps about 11 bits in highlights and more in shadows. Export takes long
 example rendered about 1.75x slower than at 8 bits. 16-bit compositing needs Chromium, which the
 CLI bundles.
 
+### Wide gamut (`--gamut p3`)
+
+By default everything is sRGB. `--gamut p3` (on `render` and `still`) composites in Display P3, so
+P3 photos and footage keep the colors sRGB can't show, and `color(display-p3 ...)` paints work:
+
+- 2D canvases and GPU filters run in Display P3. sRGB content (most images, `#rrggbb` colors) is
+  converted into it and looks the same.
+- Sources keep their gamut: the browser applies image color profiles, the server applies the ICC
+  profile of 16-bit stills and converts BT.2020 or P3-tagged video.
+- Video is tagged with P3 primaries (`smpte432`). PNG, JPEG, WebP and TIFF stills get an embedded
+  Display P3 ICC profile and AVIF stills get P3 color tags.
+- GIF, animated WebP and APNG can't carry a color tag, so their frames are converted back to sRGB.
+
+`--gamut rec2020` composites in Display P3 too (browsers have no Rec. 2020 canvas), then converts
+frames to BT.2020 primaries and tags the file. Colors a Rec. 2020 source has beyond P3 are clipped.
+
+```sh
+tasweerix render index.ts -o out/master.mov --codec prores --depth 16 --gamut p3
+tasweerix still edit.ts -o out/edited.jpg --gamut p3                   # JPEG with a P3 profile
+```
+
+Pair `--gamut` with `--depth 16` where you can: a wider gamut spreads the same 8 bits over more
+colors. Every video now also carries BT.709 color tags and is converted to YUV with the BT.709
+matrix, so players no longer guess (sRGB exports used to rely on that guess).
+
 ### GPU and speed
 
 Export uses a hardware GPU for WebGL when one answers (`--gpu auto`, the default). It tries ANGLE on

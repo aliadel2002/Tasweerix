@@ -1,9 +1,11 @@
 import { describe, expect, it, afterAll } from 'vitest';
 import { join } from 'node:path';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { adjust, applyOps, autoLevels, autoWhiteBalance, createBitmap, crop, curves, heal, histogram, mask, op, perspective, resize, resolveMask, rotate, toRGBA8, type Bitmap } from '../src';
 import { closeTestBrowser, renderFrames } from '../../cli/src/testing';
+import { buildIcc, convertGamut } from '@tasweerix/core';
+import { embedIcc } from '../../media/src/node';
 
 const px = (b: Bitmap, x: number, y: number) => Array.from(b.data.subarray((y * b.width + x) * 4, (y * b.width + x) * 4 + 4));
 const gradient = (w: number, h: number) => {
@@ -164,6 +166,28 @@ describe('photo node (browser)', () => {
     });
     const [r] = frames[0]!.at(32, 32);
     expect(Math.abs(r - (255 - 64))).toBeLessThanOrEqual(3);
+  });
+  it('keeps a Display P3 photo in a P3 render and converts it for sRGB', async () => {
+    const dir = join(__dirname, '.tmp');
+    mkdirSync(dir, { recursive: true });
+    // P3 (0.3, 0.6, 0.3), tagged with a P3 profile, at 8 bits (decoded by Chromium) and 16 bits (by the server).
+    const p3 = [77, 153, 77];
+    for (const [name, fmt] of [['p3photo8.png', 'rgb24'], ['p3photo16.png', 'rgb48be']] as const) {
+      const f = join(dir, name);
+      execFileSync('ffmpeg', ['-y', '-v', 'error', '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-s', '16x16', '-i', '-', '-pix_fmt', fmt, f], { input: Buffer.alloc(16 * 16 * 3).map((_, i) => p3[i % 3]!) });
+      writeFileSync(f, embedIcc(readFileSync(f), buildIcc('display-p3')));
+    }
+    const asSrgb = Uint8Array.from([...p3, 255]);
+    convertGamut(asSrgb, 'display-p3', 'srgb');
+    for (const [name, depth] of [['p3photo8.png', 8], ['p3photo16.png', 16]] as const) {
+      const source = `import { still, photo, op } from 'tasweerix';
+      export default still({ width: 16, height: 16 }, (c) => { c.add(photo('${name}', [op.adjust({ exposure: 0 })])); });`;
+      for (const [gamut, want] of [['display-p3', p3], ['srgb', Array.from(asSrgb.subarray(0, 3))]] as const) {
+        const f = (await renderFrames({ dir, frames: [0], source, depth, gamut })).frames[0]!;
+        const px = f.at(8, 8).slice(0, 3).map((v) => (depth === 16 ? v / 257 : v));
+        px.forEach((v, i) => expect(Math.abs(v - want[i]!), `${name} ${gamut}`).toBeLessThanOrEqual(2));
+      }
+    }
   });
   it('edits 16-bit sources at full depth', async () => {
     const dir = join(__dirname, '.tmp');

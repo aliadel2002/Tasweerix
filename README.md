@@ -66,8 +66,8 @@ Inside this repository, `pnpm tasweerix <command>` runs the CLI from source. No 
 
 | Command | Purpose |
 | --- | --- |
-| `render <entry> -o out.mp4` | Render video, animated images or a PNG sequence. Codecs: `h264`, `h265`, `vp9`, `av1`, `prores`, `gif`, `webp`, `apng`, `png`. Options include `-j` parallel workers (default one per CPU core, up to 4), `--gpu auto\|on\|off`, `--depth 8\|16`, `--range`, `--scale`, `--transparent` and `--props '{…}'`. |
-| `still <entry> -o out.png` | Render one frame to PNG, TIFF, JPG, WebP or AVIF (photos, thumbnails, posters). `--depth 16` keeps 16 bits in PNG and TIFF and 10 bits in AVIF. |
+| `render <entry> -o out.mp4` | Render video, animated images or a PNG sequence. Codecs: `h264`, `h265`, `vp9`, `av1`, `prores`, `gif`, `webp`, `apng`, `png`. Options include `-j` parallel workers (default one per CPU core, up to 4), `--gpu auto\|on\|off`, `--depth 8\|16`, `--gamut srgb\|p3\|rec2020`, `--range`, `--scale`, `--transparent` and `--props '{…}'`. |
+| `still <entry> -o out.png` | Render one frame to PNG, TIFF, JPG, WebP or AVIF (photos, thumbnails, posters). `--depth 16` keeps 16 bits in PNG and TIFF and 10 bits in AVIF; `--gamut p3` embeds a Display P3 profile. |
 | `audio <entry> -o mix.mp3` | Render the mix to wav, mp3, flac, aac, ogg or opus, with optional `--stems`. |
 | `svg <entry> -o frame.svg` | Export a frame as vector SVG. Text is converted to glyph outlines. |
 | `studio [dir]` | Open the web studio. |
@@ -186,8 +186,10 @@ the Messages API, and drive the studio with Playwright. No test needs network ac
 - Studio preview playback of heavy compositions may run below real time. Exports are always exact.
 - High bit depth is opt in: `--depth 16` composites at half-float and writes 16-bit PNG/TIFF or
   10-bit ProRes, h265, av1, vp9 (without alpha) and AVIF, with dithered 8-bit for other formats. It is
-  about 1.75x slower than the default 8-bit path. 16-bit sources with a non-sRGB color profile may
-  shift slightly in color. There is no RAW decoding and no HDR or wide-gamut pipeline.
+  about 1.75x slower than the default 8-bit path.
+- Wide gamut is opt in too: `--gamut p3` composites in Display P3, `--gamut rec2020` converts that
+  to BT.2020 on export (colors beyond P3 clip). LUT-based ICC profiles on 16-bit sources are read as
+  sRGB. There is no RAW decoding and no HDR pipeline.
 - The audio DSP is solid but basic next to dedicated tools, and there is no VST/AU hosting.
 - Two-way editing only rewrites values written as literals. Computed values are flagged in the
   inspector and must be edited in code.

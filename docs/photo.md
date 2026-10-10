@@ -30,7 +30,10 @@ tasweerix batch edit.ts -i "photos/*.jpg" -o out   # same script for every photo
 
 Ops run on 32-bit float pixels. Sources with more than 8 bits per channel (16-bit PNG or TIFF) are
 decoded at full depth by the Tasweerix server, so heavy grades and shadow lifts don't start from
-8-bit steps; 8-bit sources are decoded by the browser as before.
+8-bit steps; 8-bit sources are decoded by the browser as before. Embedded color profiles are applied
+on both paths (the server handles matrix/TRC profiles such as Display P3, Adobe RGB, ProPhoto and
+Rec. 2020; LUT-based profiles fall back to sRGB with a warning). With `--gamut p3` the ops work on
+Display P3 pixels, so a P3 photo keeps its range from file to export.
 
 ## Operations (`op`)
 

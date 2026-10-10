@@ -26,7 +26,9 @@ Studio (browser)   Export workers (headless Chromium) ──RGBA──► FFmpeg
 - **One renderer.** Preview and export share the same code. Layers (pooled offscreen canvases) are used
   only when needed (filters, masks, group opacity or blend, motion blur, adjustment layers). The WebGL2
   pipeline uses half-float intermediates (export forces them on software rasterizers too); `--depth 16`
-  also composites in float16 canvases and sends 16-bit frames to FFmpeg.
+  also composites in float16 canvases and sends 16-bit frames to FFmpeg, and `--gamut p3` runs the
+  canvases and GL output in Display P3 (ICC profiles are read and written by `@tasweerix/core`'s
+  `icc.ts` and `@tasweerix/media`'s `node/icc.ts`).
 - **Media.** Video frames are decoded by FFmpeg processes that stream sequentially per worker, which
   makes them frame-exact (the tests verify this out of order). The studio uses the same API, so the
   preview matches the export.

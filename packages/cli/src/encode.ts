@@ -1,5 +1,8 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
-import { FFMPEG } from '@tasweerix/media/node';
+import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { basename, dirname, join } from 'node:path';
+import { buildIcc, convertGamut, type CanvasGamut, type Gamut } from '@tasweerix/core';
+import { embedIcc, FFMPEG } from '@tasweerix/media/node';
 
 export type Codec = 'h264' | 'h265' | 'vp9' | 'av1' | 'prores' | 'gif' | 'png' | 'webp' | 'apng' | 'mjpeg';
 
@@ -20,6 +23,51 @@ export interface EncodeOptions {
    * h265 / av1 / vp9). Default true; false always writes 8 bits (dithered).
    */
   keepDepth?: boolean;
+  /** Color space of the input frames (the renderer's gamut). Default 'srgb'. */
+  inputGamut?: CanvasGamut;
+  /**
+   * Color space of the file: frames are converted into it and the output is tagged (video color
+   * tags, an ICC profile in PNG). Formats that can't carry a tag (gif, webp, apng, mjpeg) are always
+   * sRGB. Default: the input gamut.
+   */
+  gamut?: Gamut;
+}
+
+/** Codecs whose output carries color tags, so it can be wider than sRGB. */
+export const TAGGED_CODECS: ReadonlySet<Codec> = new Set<Codec>(['h264', 'h265', 'av1', 'vp9', 'prores', 'png']);
+
+/** The gamut a file is actually written in for these options. */
+export function outputGamut(o: Pick<EncodeOptions, 'codec' | 'gamut' | 'inputGamut'>): Gamut {
+  return TAGGED_CODECS.has(o.codec) ? (o.gamut ?? o.inputGamut ?? 'srgb') : 'srgb';
+}
+
+/** ffmpeg color tags per gamut: primaries and the YUV matrix. Transfer is always bt709 (SDR). */
+const COLOR_TAGS: Record<Gamut, { primaries: string; matrix: string }> = {
+  srgb: { primaries: 'bt709', matrix: 'bt709' },
+  'display-p3': { primaries: 'smpte432', matrix: 'bt709' },
+  rec2020: { primaries: 'bt2020', matrix: 'bt2020nc' },
+};
+
+/**
+ * YUV conversion and color tags for video codecs: an explicit matrix (swscale would pick BT.601,
+ * which players read as BT.709 and shift hues) and primaries / transfer / matrix tags.
+ */
+function colorArgs(o: EncodeOptions): string[] {
+  if (o.codec === 'png' || !TAGGED_CODECS.has(o.codec)) return [];
+  const t = COLOR_TAGS[outputGamut(o)];
+  return ['-vf', `scale=out_color_matrix=${t.matrix}:out_range=tv`, '-color_primaries', t.primaries, '-color_trc', 'bt709', '-colorspace', t.matrix, '-color_range', 'tv'];
+}
+
+/** Embeds the gamut's ICC profile in written PNG files (a single file or a frame_%05d.png sequence). */
+export function tagPngOutput(output: string, gamut: Gamut): void {
+  if (gamut === 'srgb') return;
+  const icc = buildIcc(gamut);
+  const files = output.includes('%')
+    ? readdirSync(dirname(output))
+        .filter((f) => f.startsWith(basename(output).split('%')[0]!) && f.endsWith('.png'))
+        .map((f) => join(dirname(output), f))
+    : [output];
+  for (const f of files) writeFileSync(f, embedIcc(readFileSync(f), icc));
 }
 
 /** Codecs that can store more than 8 bits per channel. h264 stays 8-bit (10-bit decoders are rare). */
@@ -123,15 +171,20 @@ export class FrameEncoder {
   frames = 0;
   /** 16-bit frames are dithered down here when the output stores 8 bits. */
   private readonly dither: boolean;
+  private readonly from: Gamut;
+  private readonly to: Gamut;
 
   constructor(readonly opts: EncodeOptions) {
     const stored = storedDepth(opts);
     this.dither = opts.depth === 16 && stored === 8;
+    this.from = opts.inputGamut ?? 'srgb';
+    this.to = outputGamut(opts);
     const args = [
       '-y', '-v', 'error',
       '-f', 'rawvideo', '-pix_fmt', stored === 16 ? 'rgba64le' : 'rgba', '-s', `${opts.width}x${opts.height}`, '-r', String(opts.fps),
       '-i', '-',
       ...codecArgs(opts),
+      ...colorArgs(opts),
       ...(opts.codec === 'png' ? ['-f', 'image2'] : []),
       opts.output,
     ];
@@ -146,6 +199,18 @@ export class FrameEncoder {
 
   async write(rgba: Buffer | Uint8Array): Promise<void> {
     this.frames++;
+    if (this.from !== this.to) {
+      // Converted on a copy: the caller may still hold the frame.
+      if (this.opts.depth === 16) {
+        const px = new Uint16Array(rgba.length / 2);
+        new Uint8Array(px.buffer).set(rgba);
+        convertGamut(px, this.from, this.to);
+        rgba = new Uint8Array(px.buffer);
+      } else {
+        rgba = Uint8Array.from(rgba);
+        convertGamut(rgba, this.from, this.to);
+      }
+    }
     if (this.dither) rgba = dither16to8(rgba);
     if (!this.proc.stdin.write(rgba)) await new Promise<void>((r) => this.proc.stdin.once('drain', () => r()));
   }
@@ -153,6 +218,7 @@ export class FrameEncoder {
   async finish(): Promise<void> {
     this.proc.stdin.end();
     await this.done;
+    if (this.opts.codec === 'png') tagPngOutput(this.opts.output, this.to);
   }
 
   abort(): void {

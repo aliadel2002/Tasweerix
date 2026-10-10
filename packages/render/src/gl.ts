@@ -1,3 +1,4 @@
+import type { CanvasGamut } from '@tasweerix/core';
 import type { Surface } from './surface';
 import { createSurface } from './surface';
 
@@ -85,8 +86,11 @@ export class GLPipeline {
   /** True when the GL canvas has a half-float drawing buffer, so `output()` keeps more than 8 bits. */
   readonly floatOutput: boolean;
 
-  /** @param floatOutput half-float drawing buffer and uploads (16-bit compositing). */
-  constructor(width = 1, height = 1, precision: 'auto' | 'half' | 'byte' = 'auto', floatOutput = false) {
+  /**
+   * @param floatOutput half-float drawing buffer and uploads (16-bit compositing).
+   * @param gamut color space of the output and of uploads (sources in other spaces are converted).
+   */
+  constructor(width = 1, height = 1, precision: 'auto' | 'half' | 'byte' = 'auto', floatOutput = false, readonly gamut: CanvasGamut = 'srgb') {
     this.canvas = createSurface(width, height);
     const gl = (this.canvas as OffscreenCanvas).getContext('webgl2', {
       premultipliedAlpha: false,
@@ -96,6 +100,11 @@ export class GLPipeline {
     }) as WebGL2RenderingContext | null;
     if (!gl) throw new Error('WebGL2 is not available');
     this.gl = gl;
+    if (gamut !== 'srgb') {
+      const cs = gl as WebGL2RenderingContext & { drawingBufferColorSpace: string; unpackColorSpace: string };
+      cs.drawingBufferColorSpace = gamut;
+      cs.unpackColorSpace = gamut;
+    }
     const floatOk = !!gl.getExtension('EXT_color_buffer_float');
     gl.getExtension('OES_texture_float_linear');
     const dbg = gl.getExtension('WEBGL_debug_renderer_info');

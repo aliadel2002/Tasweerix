@@ -1,4 +1,4 @@
-import { hashSeed, type Env, type MediaInfo } from '@tasweerix/core';
+import { hashSeed, type CanvasGamut, type Env, type MediaInfo } from '@tasweerix/core';
 import { float16Surface, type AssetProvider, type Drawable } from '@tasweerix/render';
 
 export interface BrowserAssetOptions {
@@ -19,7 +19,14 @@ export interface BrowserAssetOptions {
    * (for a Renderer with `depth: 16`). Default 8.
    */
   depth?: 8 | 16;
+  /**
+   * Working gamut of the Renderer these assets feed. With 'display-p3' the server converts
+   * wide-gamut video and 16-bit stills into P3 instead of clipping them to sRGB. Default 'srgb'.
+   */
+  gamut?: CanvasGamut;
 }
+
+const colorSpaceHeader = (res: Response): CanvasGamut => (res.headers.get('x-color-space') === 'display-p3' ? 'display-p3' : 'srgb');
 
 function joinUrl(base: string, src: string): string {
   if (/^(https?:|data:|blob:)/.test(src)) return src;
@@ -36,6 +43,7 @@ export class BrowserAssets implements AssetProvider {
   videoMode: 'server' | 'element';
   clientId: string;
   readonly depth: 8 | 16;
+  readonly gamut: CanvasGamut;
   private images = new Map<string, Drawable>();
   private pendingImages = new Map<string, Promise<Drawable>>();
   private fonts = new Map<string, Promise<string>>();
@@ -48,6 +56,7 @@ export class BrowserAssets implements AssetProvider {
     this.videoMode = opts.video ?? 'server';
     this.clientId = String(opts.clientId ?? 0);
     this.depth = opts.depth ?? 8;
+    this.gamut = opts.gamut ?? 'srgb';
   }
 
   url(src: string): string {
@@ -63,7 +72,7 @@ export class BrowserAssets implements AssetProvider {
         if (this.depth === 16) {
           const hi = await this.loadImage16(src);
           if (hi) {
-            const s = float16Surface(hi.width, hi.height, hi.data) as Drawable;
+            const s = float16Surface(hi.width, hi.height, hi.data, hi.colorSpace) as Drawable;
             this.images.set(src, s);
             return s;
           }
@@ -80,24 +89,27 @@ export class BrowserAssets implements AssetProvider {
     return p;
   }
 
-  private images16 = new Map<string, Promise<{ width: number; height: number; data: Uint16Array } | undefined>>();
+  private images16 = new Map<string, Promise<{ width: number; height: number; data: Uint16Array; colorSpace: CanvasGamut } | undefined>>();
 
-  /** 16-bit decode through the Tasweerix server (`/__tx/image16`); undefined for 8-bit sources or without a server. */
-  loadImage16(src: string): Promise<{ width: number; height: number; data: Uint16Array } | undefined> {
+  /**
+   * 16-bit decode through the Tasweerix server (`/__tx/image16`), with the embedded color profile
+   * applied; undefined for 8-bit sources or without a server.
+   */
+  loadImage16(src: string): Promise<{ width: number; height: number; data: Uint16Array; colorSpace: CanvasGamut } | undefined> {
     let p = this.images16.get(src);
     if (!p) {
       p = (async () => {
         if (/^(https?:|data:|blob:)/.test(src)) return undefined;
         let res: Response;
         try {
-          res = await fetch(`${this.server}/__tx/image16?${new URLSearchParams({ src })}`);
+          res = await fetch(`${this.server}/__tx/image16?${new URLSearchParams({ src, gamut: this.gamut })}`);
         } catch {
           return undefined;
         }
         if (res.status !== 200) return undefined;
         const width = Number(res.headers.get('x-width'));
         const height = Number(res.headers.get('x-height'));
-        return { width, height, data: new Uint16Array(await res.arrayBuffer()) };
+        return { width, height, data: new Uint16Array(await res.arrayBuffer()), colorSpace: colorSpaceHeader(res) };
       })();
       this.images16.set(src, p);
     }
@@ -122,13 +134,15 @@ export class BrowserAssets implements AssetProvider {
     if (hint?.width) q.set('w', String(hint.width));
     if (hint?.height) q.set('h', String(hint.height));
     if (this.depth === 16) q.set('depth', '16');
+    if (this.gamut !== 'srgb') q.set('gamut', this.gamut);
     const res = await fetch(`${this.server}/__tx/frame?${q}`);
     if (!res.ok) throw new Error(`Frame request failed for ${src} @ ${time}: ${res.status} ${await res.text()}`);
     const w = Number(res.headers.get('x-width'));
     const h = Number(res.headers.get('x-height'));
-    if (this.depth === 16) return float16Surface(w, h, new Uint16Array(await res.arrayBuffer())) as Drawable;
+    const colorSpace = colorSpaceHeader(res);
+    if (this.depth === 16) return float16Surface(w, h, new Uint16Array(await res.arrayBuffer()), colorSpace) as Drawable;
     const buf = new Uint8ClampedArray(await res.arrayBuffer());
-    return createImageBitmap(new ImageData(buf, w, h));
+    return createImageBitmap(new ImageData(buf, w, h, colorSpace === 'srgb' ? undefined : { colorSpace }));
   }
 
   private async elementFrame(src: string, time: number): Promise<Drawable> {

@@ -2,7 +2,8 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { availableParallelism, tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import type { Browser, Page } from 'playwright-core';
-import { run, FFMPEG } from '@tasweerix/media/node';
+import { buildIcc, type CanvasGamut, type Gamut } from '@tasweerix/core';
+import { embedIcc, run, FFMPEG } from '@tasweerix/media/node';
 import { bundle } from './bundle';
 import { launchRenderBrowser, type GpuMode } from './browser';
 import { codecFromPath, FrameEncoder, type Codec } from './encode';
@@ -35,6 +36,11 @@ export interface RenderOptions {
   transparentBackground?: boolean;
   /** Compositing and frame depth: 16 keeps more than 8 bits from decode to ffmpeg. Default 8. */
   depth?: 8 | 16;
+  /**
+   * Color space of the output: 'display-p3' or 'rec2020' composite in Display P3 (sRGB content is
+   * converted, P3 sources and colors keep their range) and tag the file. Default 'srgb'.
+   */
+  gamut?: Gamut;
   /** GPU use for WebGL: 'auto' (default, or TASWEERIX_GPU) uses a hardware GPU when one answers. */
   gpu?: GpuMode;
   onProgress?: (p: { done: number; total: number; fps: number; eta: number }) => void;
@@ -102,20 +108,24 @@ export async function render(opts: RenderOptions): Promise<{ output: string; inf
   try {
     log(rb.gpu ? `WebGL on GPU: ${rb.renderer}` : `WebGL in software (${rb.renderer || 'unknown renderer'}): heavy filter stacks render slowly${opts.gpu === 'on' ? '; no GPU answered' : ''}`);
     const first = await rb.browser.newPage();
-    const baseInit = { comp: opts.comp, props: opts.props, scale: opts.scale, motionBlurSamples: opts.motionBlurSamples, hide: opts.hide, transparentBackground: opts.transparentBackground, depth: opts.depth };
+    const gamut = opts.gamut ?? 'srgb';
+    // Canvases offer sRGB and Display P3; Rec. 2020 output is converted from P3 at encode.
+    const inputGamut: CanvasGamut = gamut === 'srgb' ? 'srgb' : 'display-p3';
+    const baseInit = { comp: opts.comp, props: opts.props, scale: opts.scale, motionBlurSamples: opts.motionBlurSamples, hide: opts.hide, transparentBackground: opts.transparentBackground, depth: opts.depth, gamut: inputGamut };
     const info = await openPage(first, `${server.url}/`, { ...baseInit, client: 0 });
     log(`${info.name}: ${info.outWidth}x${info.outHeight} @ ${info.fps}fps, ${info.frameCount} frames (${info.duration.toFixed(2)}s)`);
 
     // ---------- Still image
     if (opts.still !== undefined || info.kind === 'still') {
       const frame = opts.still ?? 0;
-      const enc = new FrameEncoder({ width: info.outWidth, height: info.outHeight, fps: 1, codec: 'png', output: join(work, 'still.png'), depth: opts.depth, keepDepth: /\.(png|tiff?|avif)$/i.test(output) });
+      const stillGamut = /\.(png|jpe?g|webp|tiff?|avif)$/i.test(output) ? gamut : 'srgb';
+      const enc = new FrameEncoder({ width: info.outWidth, height: info.outHeight, fps: 1, codec: 'png', output: join(work, 'still.png'), depth: opts.depth, keepDepth: /\.(png|tiff?|avif)$/i.test(output), inputGamut, gamut: stillGamut });
       encoders.set(0, enc);
       await first.evaluate((n) => (window as any).__tx.frame(n), frame);
       await waitFrames(pending, encoders, 1);
       await pending.get(0);
       await enc.finish();
-      await convertStill(join(work, 'still.png'), output, opts.depth);
+      await convertStill(join(work, 'still.png'), output, opts.depth, stillGamut);
       return { output, info, seconds: (Date.now() - t0) / 1000 };
     }
 
@@ -157,7 +167,7 @@ export async function render(opts: RenderOptions): Promise<{ output: string; inf
         const seg = codec === 'png' ? join(output, `frame_%05d.png`) : join(work, `seg_${String(i).padStart(3, '0')}.${segExt}`);
         if (codec === 'png') mkdirSync(output, { recursive: true });
         segFiles[i] = seg;
-        const enc = new FrameEncoder({ width: info.outWidth, height: info.outHeight, fps: info.fps, codec: segCodec, crf: opts.crf, preset: opts.preset, alpha: alpha || segCodec === 'prores', output: seg, depth: opts.depth });
+        const enc = new FrameEncoder({ width: info.outWidth, height: info.outHeight, fps: info.fps, codec: segCodec, crf: opts.crf, preset: opts.preset, alpha: alpha || segCodec === 'prores', output: seg, depth: opts.depth, inputGamut, gamut: segCodec === codec ? gamut : 'srgb' });
         encoders.set(i, enc);
         await page.evaluate(([a, b]) => (window as any).__tx.frames(a, b), [s, e]);
         await waitFrames(pending, encoders, e - s + 1, i);
@@ -216,7 +226,8 @@ async function waitFrames(pending: Map<number, Promise<void>>, encoders: Map<num
   }
 }
 
-async function convertStill(png: string, output: string, depth: 8 | 16 = 8) {
+/** Converts the PNG still (already in `gamut`, with its ICC profile) to the output format, keeping the color tag. */
+async function convertStill(png: string, output: string, depth: 8 | 16 = 8, gamut: Gamut = 'srgb') {
   const ext = output.split('.').pop()!.toLowerCase();
   if (ext === 'png') {
     const { copyFileSync } = await import('node:fs');
@@ -224,6 +235,17 @@ async function convertStill(png: string, output: string, depth: 8 | 16 = 8) {
     return;
   }
   // A 16-bit intermediate keeps its depth in TIFF (rgba64le) and AVIF (10-bit); jpg/webp get a dithered 8-bit one.
-  const args = ext === 'jpg' || ext === 'jpeg' ? ['-q:v', '2'] : ext === 'webp' ? ['-c:v', 'libwebp', '-q:v', '90'] : ext === 'avif' ? ['-c:v', 'libaom-av1', '-still-picture', '1', '-crf', '20', ...(depth === 16 ? ['-pix_fmt', 'yuv420p10le'] : [])] : [];
+  // AVIF is stored as YUV when it holds more than 8 bits or a wide gamut (RGB AVIF loses its
+  // primaries tag in this ffmpeg), with an explicit matrix so decoders don't fall back to BT.601.
+  const yuvAvif = depth === 16 || gamut !== 'srgb';
+  const matrix = gamut === 'rec2020' ? 'bt2020nc' : 'bt709';
+  const avif = ['-c:v', 'libaom-av1', '-still-picture', '1', '-crf', '20'];
+  if (yuvAvif) avif.push('-vf', `scale=out_color_matrix=${matrix}:out_range=pc`, '-pix_fmt', depth === 16 ? 'yuv420p10le' : 'yuv420p', '-color_range', 'pc', '-color_primaries', gamut === 'rec2020' ? 'bt2020' : gamut === 'display-p3' ? 'smpte432' : 'bt709', '-color_trc', 'iec61966-2-1', '-colorspace', matrix);
+  const args = ext === 'jpg' || ext === 'jpeg' ? ['-q:v', '2'] : ext === 'webp' ? ['-c:v', 'libwebp', '-q:v', '90'] : ext === 'avif' ? avif : [];
   await run(FFMPEG, ['-y', '-v', 'error', '-i', png, ...args, output]);
+  // ffmpeg drops the PNG's ICC profile; put it back (AVIF carries its gamut in the tags above).
+  if (gamut !== 'srgb' && /^(jpe?g|webp|tiff?)$/.test(ext)) {
+    const { readFileSync } = await import('node:fs');
+    writeFileSync(output, embedIcc(readFileSync(output), buildIcc(gamut)));
+  }
 }
