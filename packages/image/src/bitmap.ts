@@ -33,6 +33,20 @@ export function fromRGBA8(data: Uint8ClampedArray | Uint8Array, width: number, h
   return { width, height, data: out };
 }
 
+/** 16-bit straight RGBA (e.g. ffmpeg `rgba64le`) → float bitmap. */
+export function fromRGBA16(data: Uint16Array, width: number, height: number): Bitmap {
+  const out = new Float32Array(width * height * 4);
+  for (let i = 0; i < out.length; i++) out[i] = data[i]! / 65535;
+  return { width, height, data: out };
+}
+
+/** Float bitmap → 16-bit straight RGBA, clipped to 0..1. */
+export function toRGBA16(b: Bitmap): Uint16Array {
+  const out = new Uint16Array(b.width * b.height * 4);
+  for (let i = 0; i < out.length; i++) out[i] = Math.round(Math.min(1, Math.max(0, b.data[i]!)) * 65535);
+  return out;
+}
+
 /**
  * Converts to 8-bit RGBA. Color channels get deterministic triangular (TPDF) dither of ±1 LSB by
  * default, which hides banding in smooth gradients; exact 0 and 1 and the alpha channel stay exact.

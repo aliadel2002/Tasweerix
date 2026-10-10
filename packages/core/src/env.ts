@@ -10,6 +10,8 @@ export interface MediaInfo {
   channels?: number;
   codec?: string;
   rotation?: number;
+  /** Bits per color channel of the video/image stream (8 for most JPEG/PNG; 10, 12, 16 or 32 for high bit-depth sources). */
+  bitDepth?: number;
 }
 
 /** Host environment services (browser preview, headless export, Node tooling). */

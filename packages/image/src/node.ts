@@ -1,6 +1,6 @@
 import { ImageNode, type AnimProps, type BaseProps, type ImageProps, type NodeOptions } from '@tasweerix/core';
 import { drawMedia, registerDrawer, type Drawable } from '@tasweerix/render';
-import { fromRGBA8, toRGBA8 } from './bitmap';
+import { fromRGBA16, fromRGBA8, toRGBA8, type Bitmap } from './bitmap';
 import { applyOps, type PhotoOp } from './ops';
 
 /** An image with a non-destructive photo-edit pipeline applied before display. */
@@ -29,7 +29,12 @@ export async function processDrawable(img: Drawable, ops: PhotoOp[]): Promise<Dr
   const ctx = c.getContext('2d', { willReadFrequently: true })!;
   ctx.drawImage(img, 0, 0);
   const id = ctx.getImageData(0, 0, img.width, img.height);
-  const out = applyOps(fromRGBA8(id.data, img.width, img.height), ops);
+  return processBitmap(fromRGBA8(id.data, img.width, img.height), ops);
+}
+
+/** Runs a photo pipeline on a float bitmap (browser): returns the edited result as a drawable. */
+export async function processBitmap(src: Bitmap, ops: PhotoOp[]): Promise<Drawable> {
+  const out = applyOps(src, ops);
   const oc = new OffscreenCanvas(out.width, out.height);
   oc.getContext('2d')!.putImageData(new ImageData(toRGBA8(out), out.width, out.height), 0, 0);
   return createImageBitmap(oc);
@@ -50,8 +55,10 @@ registerDrawer(
         processed.set(
           key,
           (async () => {
-            const src = await renderer.assets.loadImage(node.props.src as string);
-            const out = await processDrawable(src, node.ops);
+            const path = node.props.src as string;
+            // High bit-depth sources (16-bit PNG/TIFF) are decoded at full depth so edits don't start from 8 bits.
+            const hi = await renderer.assets.loadImage16?.(path);
+            const out = hi ? await processBitmap(fromRGBA16(hi.data, hi.width, hi.height), node.ops) : await processDrawable(await renderer.assets.loadImage(path), node.ops);
             ready.set(key, out);
             return out;
           })(),
