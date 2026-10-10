@@ -37,7 +37,8 @@ export function Inspector({ data, onEdit, onReveal, message }: InspectorProps) {
               {k}
               {animated ? ' ◆' : ''}
             </label>,
-            <Field value={v} readOnly={animated} onCommit={(nv) => onEdit(k === 'position' ? 'at' : k, nv)} />,
+            // 2D nodes take `at`; 3D objects (Vec3 position) take `position`.
+            <Field value={v} readOnly={animated} onCommit={(nv) => onEdit(k === 'position' && !(Array.isArray(v) && v.length === 3) ? 'at' : k, nv)} />,
           ];
         })}
         {data.filters.length > 0 && [<label>filters</label>, <span class="muted">{data.filters.join(', ')}</span>]}

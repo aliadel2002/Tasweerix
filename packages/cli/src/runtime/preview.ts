@@ -79,6 +79,10 @@ function localBox(n: SceneNode, p: Record<string, any>): [number, number, number
     case 'canvas':
     case 'group':
       return size ? [-size[0] / 2, -size[1] / 2, size[0], size[1]] : null;
+    case 'scene3d': {
+      const s = size ?? [comp!.width, comp!.height];
+      return [-s[0] / 2, -s[1] / 2, s[0], s[1]];
+    }
     case 'solid': {
       const s = size ?? [comp!.width, comp!.height];
       return [-s[0] / 2, -s[1] / 2, s[0], s[1]];
@@ -117,10 +121,12 @@ function box(pts: Vec2[]): [number, number, number, number] {
 }
 
 function quad(n: SceneNode, frame: number): Vec2[] | null {
+  // Objects inside 3D scenes have 3D transforms: select them through the timeline instead.
+  if (n.meta.is3d || n.meta.role === 'texture') return null;
   const w = world(n, frame);
   if (!w || !w.props.visible) return null;
   let b = localBox(n, w.props);
-  if (!b && n.children.length) {
+  if (!b && n.children.length && n.kind !== 'scene3d') {
     // Union of children (in this node's space is complex) → approximate with world boxes of children.
     const pts = n.children.flatMap((c) => quad(c, frame) ?? []);
     if (!pts.length) return null;

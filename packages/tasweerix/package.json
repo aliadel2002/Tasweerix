@@ -19,6 +19,7 @@
     "@tasweerix/motion": "workspace:*",
     "@tasweerix/illustrate": "workspace:*",
     "@tasweerix/smart": "workspace:*",
-    "@tasweerix/vision": "workspace:*"
+    "@tasweerix/vision": "workspace:*",
+    "@tasweerix/3d": "workspace:*"
   }
 }

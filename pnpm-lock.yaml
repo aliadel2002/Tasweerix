@@ -102,6 +102,22 @@ importers:
         specifier: workspace:*
         version: link:../../packages/tasweerix
 
+  packages/3d:
+    dependencies:
+      '@tasweerix/core':
+        specifier: workspace:*
+        version: link:../core
+      '@tasweerix/render':
+        specifier: workspace:*
+        version: link:../render
+      '@tasweerix/type':
+        specifier: workspace:*
+        version: link:../type
+    devDependencies:
+      '@tasweerix/media':
+        specifier: workspace:*
+        version: link:../media
+
   packages/audio:
     dependencies:
       '@tasweerix/core':
@@ -250,6 +266,9 @@ importers:
 
   packages/tasweerix:
     dependencies:
+      '@tasweerix/3d':
+        specifier: workspace:*
+        version: link:../3d
       '@tasweerix/audio':
         specifier: workspace:*
         version: link:../audio

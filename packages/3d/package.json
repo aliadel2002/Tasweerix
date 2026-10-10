@@ -1,0 +1,20 @@
+{
+  "name": "@tasweerix/3d",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Tasweerix 3D: meshes, extruded paths and Arabic-capable 3D text, glTF/OBJ models, PBR materials, lights and shadows, animated cameras and 2D layers in 3D space, rendered with WebGL2.",
+  "license": "MIT",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@tasweerix/core": "workspace:*",
+    "@tasweerix/render": "workspace:*",
+    "@tasweerix/type": "workspace:*"
+  },
+  "devDependencies": {
+    "@tasweerix/media": "workspace:*"
+  }
+}
