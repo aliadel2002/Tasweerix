@@ -193,8 +193,10 @@ the Messages API, and drive the studio with Playwright. No test needs network ac
   sRGB. `--hdr pq|hlg` renders HDR video and stills in BT.2020; color filters other than grade clip
   wide-gamut colors to sRGB in HDR. Camera RAW needs LibRaw's `dcraw_emu` and uses the camera's
   as-shot white balance with LibRaw's default demosaic; there are no lens corrections.
-- The audio DSP is solid but basic next to dedicated tools. LV2 and LADSPA plugins run through ffmpeg; VST3, CLAP
-  and AU plugins need an external host executable, which Tasweerix does not ship yet (see [Audio](docs/audio.md#third-party-plugins)).
+- The audio DSP is solid but basic next to dedicated tools. Third-party plugins render offline only (not in
+  the studio preview), with automation sampled once per clip. LV2 and LADSPA run through ffmpeg. VST3 and
+  CLAP need the bundled host built with CMake, which is tested on Linux only. There is no Audio Unit host
+  yet (see [Audio](docs/audio.md#third-party-plugins)).
 - Two-way editing only rewrites values written as literals. Computed values are flagged in the
   inspector and must be edited in code.
 - 3D renders through WebGL2. Up to 4 directional and 4 point lights cast shadows, glTF skins use up

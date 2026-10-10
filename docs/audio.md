@@ -52,18 +52,34 @@ to ring out. `state` passes a preset or state file to the host.
 | Format | Hosted by |
 | --- | --- |
 | LV2, LADSPA | ffmpeg's `lv2` and `ladspa` filters, when ffmpeg was built with them (most Linux builds) |
-| VST3, CLAP, AU | an external host executable set with `TASWEERIX_PLUGIN_HOST`, `usePluginHost()` from `@tasweerix/audio/node`, or the effect's `host` option |
+| VST3, CLAP | the bundled host in `native/plugin-host`, built with `pnpm build:plugin-host` |
+| AU | not yet: no host ships for it. Any executable that speaks the protocol below can add it |
+
+A different host can be set with `TASWEERIX_PLUGIN_HOST`, `usePluginHost()` from `@tasweerix/audio/node`, or
+the effect's `host` option. It takes priority over the bundled one.
 
 `tasweerix audio-plugins` lists the installed plugins in the standard folders for each OS, and shows which
-formats can be hosted right now. In code, use `scanPlugins()` and `hostableFormats()` from
-`@tasweerix/audio/node`. The `VST3_PATH`, `CLAP_PATH` and `AU_PATH` variables add folders.
+formats can be hosted right now. `tasweerix audio-plugins --describe <plugin>` prints a VST3 or CLAP plugin's
+parameters with their ids and ranges. In code, use `scanPlugins()`, `hostableFormats()` and `describePlugin()`
+from `@tasweerix/audio/node`. The `VST3_PATH`, `CLAP_PATH` and `AU_PATH` variables add folders.
 `LV2_PATH` and `LADSPA_PATH` replace the defaults.
+
+### Building the host
+
+`pnpm build:plugin-host` needs CMake 3.25+ and a C++17 compiler. It downloads the CLAP headers and the
+VST3 SDK (both MIT licensed) and builds `native/plugin-host/build/tasweerix-plugin-host`, plus two test
+plugins that the test suite uses. Pass `-DTASWEERIX_HOST_VST3=OFF` to CMake for a CLAP-only build without the
+SDK download. VST3 and CLAP parameters take plain values in each parameter's own range, matched by id or
+name. `state` loads a `.vstpreset` for VST3 or a raw state file for CLAP. The host is tested on Linux.
+The macOS and Windows code paths compile from the same sources but have not been run.
 
 ### Plugin host protocol
 
 A host is any executable that speaks this protocol (version 1) over stdio:
 
 - **`<host> capabilities`** prints `{"protocol":1,"formats":["vst3","clap"]}`.
+- **`<host> describe`** reads one JSON header line and prints the plugin's
+  `{"name","vendor","version","id","inputs","outputs","params":[{"id","name","module","min","max","default"}]}`.
 - **`<host> process`** reads one JSON header line from stdin, then interleaved little-endian float32
   frames. The header is `{"protocol":1,"format","path","id","uri","name","sampleRate","channels","frames","params","state"}`.
   The host writes `{"protocol":1,"channels":C,"frames":N}` and a newline to stdout, then the processed

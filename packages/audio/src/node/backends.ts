@@ -8,6 +8,20 @@ export interface PluginBackend {
   name: string;
   formats(): PluginFormat[];
   process(req: PluginRunRequest & { plugin: PluginRef & { format: PluginFormat } }): Float32Array[];
+  /** Name, ports and parameters of a plugin, when the backend can tell. */
+  describe?(plugin: PluginRef & { format: PluginFormat }): PluginDescription;
+}
+
+/** What a host reports about a plugin (`<host> describe`). */
+export interface PluginDescription {
+  name: string;
+  vendor: string;
+  version: string;
+  id: string;
+  inputs: number;
+  outputs: number;
+  /** Parameter values are plain values in each parameter's own range. */
+  params: { id: string; name: string; module: string; min: number; max: number; default: number }[];
 }
 
 /** Version of the stdio protocol spoken with external plugin hosts (see docs/audio.md). */
@@ -113,6 +127,7 @@ const hostFormats = new Map<string, PluginFormat[]>();
  * protocol over stdio:
  *
  *   `<host> capabilities` → stdout `{"protocol":1,"formats":["vst3","clap"]}`
+ *   `<host> describe` ← stdin: one JSON header line → stdout: the plugin's name, ports and parameters
  *   `<host> process` ← stdin: one JSON header line, then interleaved float32 little-endian frames
  *                    → stdout: one JSON header line `{"protocol":1,"channels":C,"frames":N}`, then frames
  *
@@ -136,6 +151,11 @@ export function externalHostBackend(host: string | string[]): PluginBackend {
         hostFormats.set(key, f);
       }
       return f;
+    },
+    describe(plugin) {
+      const header = { protocol: PLUGIN_HOST_PROTOCOL, ...plugin };
+      const out = spawnOrThrow([...cmd, 'describe'], Buffer.from(JSON.stringify(header) + '\n', 'utf8'), `${plugin.format} plugin ${plugin.path}`);
+      return JSON.parse(out.toString('utf8')) as PluginDescription;
     },
     process({ plugin, sampleRate, channels, params, state }) {
       const frames = channels[0]?.length ?? 0;
