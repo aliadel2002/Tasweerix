@@ -370,14 +370,13 @@ registerDrawer(
     const ta = gl.upload(la.surface);
     const tb = gl.upload(lb.surface);
     const fc = { gl, frame: d.frame, assets: r.assets, scale: r.scale };
-    const out = gl.run(impl.frag, { uTex: ta, uTo: tb, uProgress: p, ...(impl.uniforms?.(spec.params, fc) ?? {}) });
-    const img = gl.output(out);
+    const img = gl.outputPass(impl.frag, { uTex: ta, uTo: tb, uProgress: p, ...(impl.uniforms?.(spec.params, fc) ?? {}) });
     d.ctx.save();
     d.ctx.setTransform(1, 0, 0, 1, 0, 0);
     d.ctx.drawImage(img, 0, 0);
     d.ctx.restore();
     img.close?.();
-    [ta, tb, out].forEach((x) => gl.release(x));
+    [ta, tb].forEach((x) => gl.release(x));
     r.releaseLayer(la.surface);
     r.releaseLayer(lb.surface);
   },

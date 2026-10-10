@@ -14,7 +14,7 @@ import {
   type Vec2,
 } from '@tasweerix/core';
 import type { AssetProvider } from './assets';
-import { getFilter, LUMA_TO_ALPHA, MIX_FRAG, type FilterContext } from './filters';
+import { canSharePass, fusePointStages, getFilter, LUMA_TO_ALPHA, MIX_FRAG, type FilterContext, type FilterImpl, type PointStage } from './filters';
 import { GLPipeline, type Tex } from './gl';
 import { toCanvasPaint } from './paint';
 import { createSurface, ctx2d, SurfacePool, type Ctx2D, type Surface } from './surface';
@@ -365,14 +365,12 @@ export class Renderer {
     if (spec.mode.startsWith('luma')) {
       const gl = this.gl;
       const t = gl.upload(m.surface);
-      const l = gl.run(LUMA_TO_ALPHA, { uTex: t, uInvert: 0 });
-      const img = gl.output(l);
+      const img = gl.outputPass(LUMA_TO_ALPHA, { uTex: t, uInvert: 0 });
       m.ctx.setTransform(1, 0, 0, 1, 0, 0);
       m.ctx.clearRect(0, 0, this.pool.width, this.pool.height);
       m.ctx.drawImage(img, 0, 0);
       img.close?.();
       gl.release(t);
-      gl.release(l);
       maskSurface = m.surface;
     }
     layerCtx.save();
@@ -387,18 +385,47 @@ export class Renderer {
 
   /** Runs a filter chain over a surface in place. */
   applyFilters(filters: FilterSpec[], local: FrameContext, ctx: Ctx2D, surface: Surface): void {
-    const gl = this.gl;
-    const fc: FilterContext = { gl, frame: local, assets: this.assets, scale: this.scale };
-    let tex: Tex = gl.upload(surface);
+    const fc: FilterContext = { gl: this.gl, frame: local, assets: this.assets, scale: this.scale };
+    const steps: { impl: FilterImpl; params: Record<string, any>; amount: number }[] = [];
     for (const f of filters) {
       const impl = getFilter(f.kind);
       if (!impl) {
         console.warn(`[tasweerix] unknown filter "${f.kind}"`);
         continue;
       }
-      const params = resolveParams(f, local);
       const amount = f.amount !== undefined ? resolve(f.amount, local) : 1;
-      if (amount <= 0) continue;
+      if (amount > 0) steps.push({ impl, params: resolveParams(f, local), amount: Math.min(1, amount) });
+    }
+    if (!steps.length) return;
+    const gl = this.gl;
+    const points = steps.map((st) => st.impl.point?.(st.params, fc));
+    let tex: Tex = gl.upload(surface);
+    let img: (CanvasImageSource & { close?: () => void }) | undefined;
+    for (let i = 0; i < steps.length; ) {
+      // Consecutive per-pixel filters share one pass; when they end the chain, it renders straight
+      // to the output canvas.
+      const stages: (PointStage & { amount: number })[] = [];
+      for (; i < steps.length && points[i]; i++) {
+        if (stages.length && !canSharePass(stages, points[i]!, gl.software)) break;
+        stages.push({ ...points[i]!, amount: steps[i]!.amount });
+      }
+      if (stages.length > 1 || (stages.length && i === steps.length)) {
+        const pass = fusePointStages(tex, stages);
+        if (i === steps.length) img = gl.outputPass(pass.frag, pass.uniforms);
+        else {
+          const out = gl.run(pass.frag, pass.uniforms);
+          gl.release(tex);
+          tex = out;
+        }
+        pass.dispose();
+        continue;
+      }
+      // A lone per-pixel filter mid-chain runs through its own `apply`.
+      if (stages.length) {
+        points[--i]?.dispose?.();
+        points[i] = undefined;
+      }
+      const { impl, params, amount } = steps[i++]!;
       const out = impl.apply(tex, params, fc);
       if (amount < 1) {
         const mixed = gl.run(MIX_FRAG, { uTex: out, uOrig: tex, uAmount: amount });
@@ -410,7 +437,7 @@ export class Renderer {
         tex = out;
       }
     }
-    const img = gl.output(tex);
+    img ??= gl.output(tex);
     gl.release(tex);
     ctx.save();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
