@@ -65,7 +65,8 @@ export async function bundle(opts: BundleOptions): Promise<{ code: string; map?:
     plugins: [entryPlugin(entry), workspaceResolver()],
     logLevel: 'silent',
     define: { 'process.env.NODE_ENV': '"production"', ...(opts.define ?? {}) },
-    external: isBrowser ? [] : ['node:*', 'playwright-core', 'esbuild'],
+    // Emscripten modules reference Node built-ins in branches never taken in browsers.
+    external: isBrowser ? ['fs', 'path', 'module', 'url', 'crypto', 'worker_threads'] : ['node:*', 'playwright-core', 'esbuild'],
     nodePaths: [join(CLI_ROOT, 'node_modules')],
     outfile: opts.outfile ?? 'bundle.js',
     loader: { '.wasm': 'binary' },

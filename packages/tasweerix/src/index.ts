@@ -7,3 +7,4 @@ export { fx, transition, registerFilter, registerTransition, registerDrawer, reg
 export { captions, parseSubtitles, toSrt, toVtt, type Cue } from '@tasweerix/media';
 export { afx, analyze, AudioAnalysis, tone, sfx, sequenceSynth, noteToHz, renderMix, encodeWav, decodeWav, integratedLoudness, detectBeats, detectOnsets, detectSilence, type EqBand, type Note, type Wave } from '@tasweerix/audio';
 export { photo, op, mask, PhotoNode, applyOps, histogram, type PhotoOp, type MaskSpec, type Bitmap } from '@tasweerix/image';
+export { kashida, kashidaText, arabicDigits, stripDiacritics, loadFont, registerFont, TypeFont } from '@tasweerix/type';

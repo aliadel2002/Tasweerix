@@ -226,6 +226,13 @@ export function fontFamilyFor(font: string): string {
   return fontFamilies.get(font) ?? font;
 }
 
+type FontHook = (fontSrc: string, renderer: Renderer) => Promise<void>;
+const fontHooks: FontHook[] = [];
+/** Lets text engines (e.g. HarfBuzz) load font files before the first frame. */
+export function onFontPrepare(hook: FontHook): void {
+  fontHooks.push(hook);
+}
+
 function resolvedText(n: TextNode, props: Record<string, any>): ResolvedText {
   return { ...(props as ResolvedText), text: String(props.text ?? ''), fontFamily: fontFamilyFor(props.font) };
 }
@@ -313,7 +320,9 @@ registerDrawer(
       const fonts = new Set<string>();
       if (typeof font === 'string') fonts.add(font);
       for (const f of fonts) {
-        if (FONT_FILE_RE.test(f) && !fontFamilies.has(f)) fontFamilies.set(f, await renderer.assets.loadFont(f));
+        if (!FONT_FILE_RE.test(f)) continue;
+        if (!fontFamilies.has(f)) fontFamilies.set(f, await renderer.assets.loadFont(f));
+        await Promise.all(fontHooks.map((h) => h(f, renderer)));
       }
     },
   },
