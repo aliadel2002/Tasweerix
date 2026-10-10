@@ -15,6 +15,49 @@ export interface EncodeOptions {
   output: string;
   /** Input frame depth: 8 → rgba, 16 → rgba64le. Default 8. */
   depth?: 8 | 16;
+  /**
+   * With 16-bit input, store more than 8 bits where the codec can (16-bit PNG, 10-bit ProRes /
+   * h265 / av1 / vp9). Default true; false always writes 8 bits (dithered).
+   */
+  keepDepth?: boolean;
+}
+
+/** Codecs that can store more than 8 bits per channel. h264 stays 8-bit (10-bit decoders are rare). */
+export const HIGH_DEPTH_CODECS: ReadonlySet<Codec> = new Set<Codec>(['png', 'prores', 'h265', 'av1', 'vp9']);
+
+/** Bits per channel the encoder actually stores for these options (8 or 16 input to ffmpeg). */
+export function storedDepth(o: Pick<EncodeOptions, 'codec' | 'depth' | 'keepDepth' | 'alpha'>): 8 | 16 {
+  // vp9 has no 10-bit alpha format.
+  return o.depth === 16 && o.keepDepth !== false && HIGH_DEPTH_CODECS.has(o.codec) && !(o.codec === 'vp9' && o.alpha) ? 16 : 8;
+}
+
+/**
+ * rgba64le → rgba with deterministic triangular (TPDF) dither of ±1 level on color channels; alpha
+ * and exact black/white are rounded. ffmpeg truncates 16 → 8-bit RGB without dither, which bands.
+ */
+export function dither16to8(src: Uint8Array): Buffer {
+  const n = src.length >> 1;
+  const v16 = new Uint16Array(src.buffer, src.byteOffset, n);
+  const out = Buffer.allocUnsafe(n);
+  for (let i = 0; i < n; i++) {
+    const v = v16[i]!;
+    const x = (v * 255) / 65535;
+    if ((i & 3) === 3 || v === 0 || v === 65535) out[i] = Math.round(x);
+    else {
+      const r = Math.round(x + (hash32(i) - hash32(i ^ 0x9e3779b9)) / 4294967296);
+      out[i] = r < 0 ? 0 : r > 255 ? 255 : r;
+    }
+  }
+  return out;
+}
+
+function hash32(n: number): number {
+  n ^= n >>> 16;
+  n = Math.imul(n, 0x7feb352d);
+  n ^= n >>> 15;
+  n = Math.imul(n, 0x846ca68b);
+  n ^= n >>> 16;
+  return n >>> 0;
 }
 
 export function defaultExtension(codec: Codec, alpha = false): string {
@@ -47,15 +90,16 @@ export function codecFromPath(path: string): Codec | undefined {
 
 function codecArgs(o: EncodeOptions): string[] {
   const crf = o.crf;
+  const hi = storedDepth(o) === 16;
   switch (o.codec) {
     case 'h264':
       return ['-c:v', 'libx264', '-preset', o.preset ?? 'medium', '-crf', String(crf ?? 18), '-pix_fmt', 'yuv420p', '-movflags', '+faststart'];
     case 'h265':
-      return ['-c:v', 'libx265', '-preset', o.preset ?? 'medium', '-crf', String(crf ?? 22), '-pix_fmt', 'yuv420p', '-tag:v', 'hvc1', '-x265-params', 'log-level=error'];
+      return ['-c:v', 'libx265', '-preset', o.preset ?? 'medium', '-crf', String(crf ?? 22), '-pix_fmt', hi ? 'yuv420p10le' : 'yuv420p', '-tag:v', 'hvc1', '-x265-params', 'log-level=error'];
     case 'av1':
-      return ['-c:v', 'libsvtav1', '-crf', String(crf ?? 32), '-preset', o.preset ?? '8', '-pix_fmt', 'yuv420p'];
+      return ['-c:v', 'libsvtav1', '-crf', String(crf ?? 32), '-preset', o.preset ?? '8', '-pix_fmt', hi ? 'yuv420p10le' : 'yuv420p'];
     case 'vp9':
-      return ['-c:v', 'libvpx-vp9', '-crf', String(crf ?? 30), '-b:v', '0', '-row-mt', '1', '-pix_fmt', o.alpha ? 'yuva420p' : 'yuv420p'];
+      return ['-c:v', 'libvpx-vp9', '-crf', String(crf ?? 30), '-b:v', '0', '-row-mt', '1', '-pix_fmt', o.alpha ? 'yuva420p' : hi ? 'yuv420p10le' : 'yuv420p'];
     case 'prores':
       return ['-c:v', 'prores_ks', '-profile:v', o.alpha ? '4444' : '3', '-pix_fmt', o.alpha ? 'yuva444p10le' : 'yuv422p10le', '-vendor', 'apl0'];
     case 'gif':
@@ -77,11 +121,15 @@ export class FrameEncoder {
   private stderr: string[] = [];
   private done: Promise<void>;
   frames = 0;
+  /** 16-bit frames are dithered down here when the output stores 8 bits. */
+  private readonly dither: boolean;
 
   constructor(readonly opts: EncodeOptions) {
+    const stored = storedDepth(opts);
+    this.dither = opts.depth === 16 && stored === 8;
     const args = [
       '-y', '-v', 'error',
-      '-f', 'rawvideo', '-pix_fmt', opts.depth === 16 ? 'rgba64le' : 'rgba', '-s', `${opts.width}x${opts.height}`, '-r', String(opts.fps),
+      '-f', 'rawvideo', '-pix_fmt', stored === 16 ? 'rgba64le' : 'rgba', '-s', `${opts.width}x${opts.height}`, '-r', String(opts.fps),
       '-i', '-',
       ...codecArgs(opts),
       ...(opts.codec === 'png' ? ['-f', 'image2'] : []),
@@ -98,6 +146,7 @@ export class FrameEncoder {
 
   async write(rgba: Buffer | Uint8Array): Promise<void> {
     this.frames++;
+    if (this.dither) rgba = dither16to8(rgba);
     if (!this.proc.stdin.write(rgba)) await new Promise<void>((r) => this.proc.stdin.once('drain', () => r()));
   }
 
