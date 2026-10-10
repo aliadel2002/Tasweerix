@@ -35,9 +35,9 @@ tasweerix studio .                                # live editor with two-way edi
 | Area | What you get |
 | --- | --- |
 | **Video editing** | Trims, speed and reverse, time remapping, sequences and overlaps, nested compositions, masks (alpha and luma), blend modes, adjustment layers, motion blur, 14 GPU transitions plus custom GLSL, captions from SRT/VTT, frame-exact decoding. |
-| **Color and effects** | 43 WebGL2 filters: grade, curves, levels, HSL per range, 3D LUTs (.cube), chroma and luma key, blur family, glow, drop shadow, grain, halftone, glitch, distortions, custom shaders. |
-| **Photo editing** | Crop and straighten, Lanczos resize, perspective correction, auto levels and white balance, local adjustments through masks (radial, gradient, color range, luminance, magic wand, brush, polygon), heal and clone, denoise, dehaze, clarity. Ops run on float pixels and keep highlight headroom between steps, 16-bit PNG and TIFF sources are decoded at full depth, and 8-bit output is dithered to avoid banding. There is also batch mode. |
-| **Audio** | A pure-TypeScript engine with identical output in Node and the browser. It covers EQ, compressor, limiter, gate, de-esser, reverb (algorithmic and convolution), delay, chorus, phaser, distortion, time-stretch, pitch shift and noise reduction. It also has sidechain ducking, buses, stems, BS.1770 loudness, synth voices and SFX. |
+| **Color and effects** | 43 WebGL2 filters: grade, curves, levels, HSL per range, 3D LUTs (.cube), chroma and luma key, HDR tone mapping, blur family, glow, drop shadow, grain, halftone, glitch, distortions, custom shaders. |
+| **Photo editing** | Crop and straighten, Lanczos resize, perspective correction, auto levels and white balance, local adjustments through masks (radial, gradient, color range, luminance, magic wand, brush, polygon), heal and clone, denoise, dehaze, clarity. Camera RAW (DNG, CR3, NEF, ARW and more, through LibRaw). Ops run on float pixels and keep highlight headroom between steps, 16-bit PNG and TIFF sources are decoded at full depth, embedded ICC profiles are applied, and 8-bit output is dithered to avoid banding. There is also batch mode. |
+| **Audio** | A pure-TypeScript engine with identical output in Node and the browser. It covers EQ, compressor, limiter, gate, de-esser, reverb (algorithmic and convolution), delay, chorus, phaser, distortion, time-stretch, pitch shift and noise reduction. It also has sidechain ducking, buses, stems, BS.1770 loudness, synth voices and SFX. Third-party VST3, CLAP, LV2 and LADSPA plugins run in clip and bus chains with `afx.plugin()`. |
 | **Motion graphics** | Kinetic typography, enter/exit/loop behaviors, path morphing, trim paths, follow-path, repeaters, deterministic particles, animated charts, lower thirds, title cards, callouts and audio-reactive visuals. |
 | **Illustration** | Path builder, boolean operations, offset, stroke-to-path, Poisson disc, Delaunay and Voronoi, flow fields, L-systems, patterns, SVG import, and SVG export of any frame. |
 | **Typography** | HarfBuzz shaping and the Unicode bidi algorithm. **Arabic and other RTL or joining scripts animate letter by letter without breaking their joined forms.** Kashida stretching and Arabic-Indic digits are included. |
@@ -46,7 +46,7 @@ tasweerix studio .                                # live editor with two-way edi
 | **3D** | Real 3D scenes as layers: boxes, spheres, tori, extruded SVG paths, **extruded Arabic and Latin text** shaped by HarfBuzz, glTF/GLB and OBJ models with skeletal animation and morph targets. Metalness/roughness materials, textures (images, live video, any 2D layer), image-based lighting and reflections (built-in studio and sky, or your own .hdr), soft shadows from several directional and point lights, fog, animated cameras with cuts, and After Effects-style 3D layers. Rendered with WebGL2. |
 | **Stabilization and tracking** | Pure-TypeScript computer vision (corner detection, pyramidal optical flow, RANSAC). Smooth or tripod-lock shaky footage with automatic edge cropping (perspective and rolling-shutter aware), pin graphics to moving objects with point tracking, and corner-pin pictures onto tracked planes. |
 | **AI** | Claude writes and reads in your builds: generated titles and copy, structured JSON, image and video-frame descriptions. Speech becomes word-timed captions (translated if you like), transcript-based cuts and chapter markers. The **assistant** edits your project code from a sentence, in the CLI and in the studio. Answers are cached so renders stay deterministic; providers are pluggable. |
-| **Interchange** | Export the edit to **FCPXML** (Final Cut Pro, DaVinci Resolve), **FCP7 XML** (Premiere Pro), **OpenTimelineIO** or **EDL**, and **import** edits from all four as editable TypeScript or at build time. Graphics can optionally be rendered as a ProRes 4444 alpha layer. |
+| **Interchange** | Export the edit to **FCPXML** (Final Cut Pro, DaVinci Resolve), **FCP7 XML** (Premiere Pro), **OpenTimelineIO** or **EDL**, and **import** edits from all four as editable TypeScript or at build time. Import is tested on real exports from Final Cut Pro, Premiere Pro and Nuke Studio. Graphics can optionally be rendered as a ProRes 4444 alpha layer. |
 
 ## Quick start
 
@@ -172,7 +172,12 @@ other examples), so pass `--root .` for them.
 pnpm install
 pnpm typecheck     # strict TypeScript across all packages
 pnpm test          # unit, pixel (headless Chromium + WebGL2), DSP, vision, interchange, AI and studio end-to-end tests
+pnpm examples      # render every example
+pnpm gpu-check     # compare GPU exports with SwiftShader and time them (needs a hardware GPU)
+pnpm build:plugin-host   # build the native VST3/CLAP host (CMake)
 ```
+
+CI runs the typecheck, the tests and the example renders on every pull request and push to `main`.
 
 The tests render real frames in headless Chromium, decode real media with FFmpeg, measure stabilization
 against footage with known shake, read timelines written by OpenTimelineIO's adapters (and check that
