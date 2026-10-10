@@ -33,6 +33,8 @@ export interface RenderOptions {
   /** Node kinds to leave out of the render. */
   hide?: string[];
   transparentBackground?: boolean;
+  /** Compositing and frame depth: 16 keeps more than 8 bits from decode to ffmpeg. Default 8. */
+  depth?: 8 | 16;
   /** GPU use for WebGL: 'auto' (default, or TASWEERIX_GPU) uses a hardware GPU when one answers. */
   gpu?: GpuMode;
   onProgress?: (p: { done: number; total: number; fps: number; eta: number }) => void;
@@ -100,7 +102,7 @@ export async function render(opts: RenderOptions): Promise<{ output: string; inf
   try {
     log(rb.gpu ? `WebGL on GPU: ${rb.renderer}` : `WebGL in software (${rb.renderer || 'unknown renderer'}): heavy filter stacks render slowly${opts.gpu === 'on' ? '; no GPU answered' : ''}`);
     const first = await rb.browser.newPage();
-    const baseInit = { comp: opts.comp, props: opts.props, scale: opts.scale, motionBlurSamples: opts.motionBlurSamples, hide: opts.hide, transparentBackground: opts.transparentBackground };
+    const baseInit = { comp: opts.comp, props: opts.props, scale: opts.scale, motionBlurSamples: opts.motionBlurSamples, hide: opts.hide, transparentBackground: opts.transparentBackground, depth: opts.depth };
     const info = await openPage(first, `${server.url}/`, { ...baseInit, client: 0 });
     log(`${info.name}: ${info.outWidth}x${info.outHeight} @ ${info.fps}fps, ${info.frameCount} frames (${info.duration.toFixed(2)}s)`);
 
