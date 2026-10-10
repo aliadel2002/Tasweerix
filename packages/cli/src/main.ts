@@ -52,6 +52,7 @@ program
       props: parseProps(o.props),
       root: o.root,
       motionBlurSamples: o.motionBlurSamples,
+      depth: o.depth,
       gpu: o.gpu,
       depth: o.depth,
       renderAudio: renderAudioForExport,
