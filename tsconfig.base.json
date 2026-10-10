@@ -3,12 +3,7 @@
     "target": "ES2022",
     "module": "ESNext",
     "moduleResolution": "Bundler",
-    "lib": [
-      "ES2022",
-      "DOM",
-      "DOM.Iterable",
-      "WebWorker.ImportScripts"
-    ],
+    "lib": ["ES2022", "DOM", "DOM.Iterable", "WebWorker.ImportScripts"],
     "strict": true,
     "noUncheckedIndexedAccess": false,
     "noImplicitOverride": true,
@@ -21,74 +16,6 @@
     "allowImportingTsExtensions": false,
     "jsx": "react-jsx",
     "jsxImportSource": "preact",
-    "types": [
-      "node"
-    ],
-    "paths": {
-      "tasweerix": [
-        "./packages/tasweerix/src/index.ts"
-      ],
-      "@tasweerix/3d": [
-        "./packages/3d/src/index.ts"
-      ],
-      "@tasweerix/ai": [
-        "./packages/ai/src/index.ts"
-      ],
-      "@tasweerix/ai/node": [
-        "./packages/ai/src/node.ts"
-      ],
-      "@tasweerix/audio": [
-        "./packages/audio/src/index.ts"
-      ],
-      "@tasweerix/audio/node": [
-        "./packages/audio/src/node/index.ts"
-      ],
-      "@tasweerix/cli": [
-        "./packages/cli/src/main.ts"
-      ],
-      "@tasweerix/codemod": [
-        "./packages/codemod/src/index.ts"
-      ],
-      "@tasweerix/core": [
-        "./packages/core/src/index.ts"
-      ],
-      "@tasweerix/illustrate": [
-        "./packages/illustrate/src/index.ts"
-      ],
-      "@tasweerix/image": [
-        "./packages/image/src/index.ts"
-      ],
-      "@tasweerix/interchange": [
-        "./packages/interchange/src/index.ts"
-      ],
-      "@tasweerix/interchange/node": [
-        "./packages/interchange/src/node.ts"
-      ],
-      "@tasweerix/media": [
-        "./packages/media/src/index.ts"
-      ],
-      "@tasweerix/media/node": [
-        "./packages/media/src/node/index.ts"
-      ],
-      "@tasweerix/motion": [
-        "./packages/motion/src/index.ts"
-      ],
-      "@tasweerix/render": [
-        "./packages/render/src/index.ts"
-      ],
-      "@tasweerix/smart": [
-        "./packages/smart/src/index.ts"
-      ],
-      "@tasweerix/type": [
-        "./packages/type/src/index.ts"
-      ],
-      "@tasweerix/vision": [
-        "./packages/vision/src/index.ts"
-      ],
-      "@tasweerix/vision/node": [
-        "./packages/vision/src/node.ts"
-      ]
-    },
-    "baseUrl": "."
+    "types": ["node"]
   }
 }

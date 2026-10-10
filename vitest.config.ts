@@ -1,7 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { defineConfig } from 'vitest/config';
-import tsconfigPaths from 'vite-tsconfig-paths';
 
 const require = createRequire(import.meta.url);
 
@@ -26,9 +25,7 @@ const wasmBinary = {
 };
 
 export default defineConfig({
-  // Resolve @tasweerix/* to TypeScript sources (see tsconfig.base.json paths)
-  // so tests run without a build step, mirroring pre-publish dev behavior.
-  plugins: [tsconfigPaths(), wasmBinary],
+  plugins: [wasmBinary],
   test: {
     include: ['packages/*/test/**/*.test.ts'],
     exclude: ['**/node_modules/**'],

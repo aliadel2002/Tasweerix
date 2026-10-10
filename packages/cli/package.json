@@ -7,15 +7,9 @@
   "bin": {
     "tasweerix": "./bin/tasweerix.mjs"
   },
-  "main": "./dist/main.js",
+  "main": "./src/index.ts",
   "exports": {
-    ".": {
-      "types": "./dist/main.d.ts",
-      "import": "./dist/main.js",
-      "require": "./dist/main.cjs",
-      "default": "./dist/main.js"
-    },
-    "./package.json": "./package.json"
+    ".": "./src/index.ts"
   },
   "dependencies": {
     "@tasweerix/core": "workspace:*",
@@ -39,16 +33,21 @@
   "devDependencies": {
     "@types/ws": "^8.5.13"
   },
-  "types": "./dist/main.d.ts",
   "files": [
     "dist",
-    "bin"
+    "src/runtime"
   ],
   "publishConfig": {
-    "access": "public"
+    "access": "public",
+    "bin": {
+      "tasweerix": "./dist/main.js"
+    },
+    "exports": {
+      "./package.json": "./package.json"
+    }
   },
   "scripts": {
-    "build": "tsup src/main.ts --format esm --dts --out-dir dist --clean",
+    "build": "tsup",
     "prepublishOnly": "pnpm run build"
   }
 }

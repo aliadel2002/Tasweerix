@@ -4,16 +4,10 @@
   "type": "module",
   "description": "Tasweerix 3D: meshes, extruded paths and Arabic-capable 3D text, glTF/OBJ models, PBR materials, lights and shadows, animated cameras and 2D layers in 3D space, rendered with WebGL2.",
   "license": "MIT",
-  "main": "./dist/index.cjs",
-  "types": "./dist/index.d.ts",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
   "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js",
-      "require": "./dist/index.cjs",
-      "default": "./dist/index.js"
-    },
-    "./package.json": "./package.json"
+    ".": "./src/index.ts"
   },
   "dependencies": {
     "@tasweerix/core": "workspace:*",
@@ -23,15 +17,23 @@
   "devDependencies": {
     "@tasweerix/media": "workspace:*"
   },
-  "module": "./dist/index.js",
   "files": [
     "dist"
   ],
   "publishConfig": {
-    "access": "public"
+    "access": "public",
+    "main": "./dist/index.js",
+    "types": "./dist/index.d.ts",
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "./package.json": "./package.json"
+    }
   },
   "scripts": {
-    "build": "tsup src/index.ts --format esm,cjs --dts --out-dir dist --clean",
+    "build": "tsup src/index.ts --format esm --dts --clean",
     "prepublishOnly": "pnpm run build"
   }
 }

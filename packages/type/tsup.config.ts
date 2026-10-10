@@ -1,24 +1,12 @@
 import { defineConfig } from 'tsup';
 
 export default defineConfig({
-  entry: ['src/index.ts'],
-  format: ['esm', 'cjs'],
-  dts: true,
-  outDir: 'dist',
+  entry: ['src/index.ts', 'src/wasm-static.ts', 'src/wasm-node.ts'],
+  format: ['esm'],
+  // The wasm variants are internal (reached only through #hbwasm), so only the entry needs types.
+  dts: { entry: 'src/index.ts' },
   clean: true,
-  // Bundle harfbuzzjs (JS glue + .wasm) instead of leaving it external, so the
-  // wasm binary loader below can inline it and dist is fully self-contained.
-  noExternal: ['harfbuzzjs'],
-  // Inline harfbuzzjs/hb.wasm as bytes (mirrors the esbuild 'binary' loader
-  // the CLI bundler uses for the tasweerix-bundle condition).
-  loader: { '.wasm': 'binary' },
-  esbuildOptions(options) {
-    // Resolve the package's own `#hbwasm` import (see package.json "imports")
-    // to the static variant so the wasm binary is inlined into dist.
-    // Published dist must work when the CLI re-bundles it: that esbuild step
-    // runs far from node_modules, so the disk-reading wasm-node variant would
-    // fail there. Inlining keeps every consumer (Node, browser, CLI bundles)
-    // working identically.
-    options.conditions = ['tasweerix-bundle', ...(options.conditions ?? [])];
-  },
+  // Keep the `#hbwasm` import in dist so the published package's "imports" map (see publishConfig)
+  // still picks the variant per consumer: inlined wasm for CLI/browser bundles, read from disk in Node.
+  external: ['#hbwasm'],
 });
