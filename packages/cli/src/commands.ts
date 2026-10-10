@@ -4,7 +4,7 @@ import { basename, dirname, extname, join, relative, resolve } from 'node:path';
 import { decodePcm, FFMPEG, run } from '@tasweerix/media/node';
 import { detectBeats, detectSilence, encodeWav, integratedLoudness, PLUGIN_FORMATS, renderMix, truePeakDb, type PluginFormat } from '@tasweerix/audio';
 // Enables afx.plugin() (VST3, CLAP, AU, LV2, LADSPA) for every command that mixes audio.
-import { hostableFormats, scanPlugins } from '@tasweerix/audio/node';
+import { describePlugin, hostableFormats, scanPlugins } from '@tasweerix/audio/node';
 import { loadComposition } from './project';
 import { toSVG } from '@tasweerix/illustrate';
 import { loadFont, getFont, layoutWithFont } from '@tasweerix/type';
@@ -220,8 +220,16 @@ export function registerCommands(program: Command): void {
     .command('audio-plugins')
     .description('List installed VST3, CLAP, AU, LV2 and LADSPA plugins and which formats can be hosted')
     .option('-f, --format <formats>', `comma-separated formats (${PLUGIN_FORMATS.join(', ')})`)
+    .option('--describe <plugin>', 'show the parameters of one plugin (path or name)')
     .option('--json', 'machine-readable output')
     .action((o) => {
+      if (o.describe) {
+        const d = describePlugin(String(o.describe));
+        if (o.json) return void console.log(JSON.stringify(d, null, 2));
+        console.log(`${d.name}${d.vendor ? ` (${d.vendor})` : ''} ${d.version}  ${d.inputs} in / ${d.outputs} out`);
+        for (const p of d.params) console.log(`  ${p.id.padStart(6)}  ${p.name}  ${p.min} … ${p.max} (default ${p.default})`);
+        return;
+      }
       const formats = o.format ? (String(o.format).split(',') as PluginFormat[]) : undefined;
       const unknown = formats?.filter((f) => !PLUGIN_FORMATS.includes(f));
       if (unknown?.length) throw new Error(`Unknown plugin format: ${unknown.join(', ')}`);

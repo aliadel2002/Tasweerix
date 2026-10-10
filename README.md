@@ -186,12 +186,14 @@ the Messages API, and drive the studio with Playwright. No test needs network ac
 - Studio preview playback of heavy compositions may run below real time. Exports are always exact.
 - High bit depth is opt in: `--depth 16` composites at half-float and writes 16-bit PNG/TIFF or
   10-bit ProRes, h265, av1, vp9 (without alpha) and AVIF, with dithered 8-bit for other formats. It is
-    about 1.75x slower than the default 8-bit path.
+   about 1.75x slower than the default 8-bit path.
 - Wide gamut is opt in too: `--gamut p3` composites in Display P3, `--gamut rec2020` converts that
   to BT.2020 on export (colors beyond P3 clip). LUT-based ICC profiles on 16-bit sources are read as
   sRGB. There is no RAW decoding and no HDR pipeline.
-- The audio DSP is solid but basic next to dedicated tools. LV2 and LADSPA plugins run through ffmpeg; VST3, CLAP
-  and AU plugins need an external host executable, which Tasweerix does not ship yet (see [Audio](docs/audio.md#third-party-plugins)).
+- The audio DSP is solid but basic next to dedicated tools. Third-party plugins render offline only (not in
+  the studio preview), with automation sampled once per clip. LV2 and LADSPA run through ffmpeg. VST3 and
+  CLAP need the bundled host built with CMake, which is tested on Linux only. There is no Audio Unit host
+  yet (see [Audio](docs/audio.md#third-party-plugins)).
 - Two-way editing only rewrites values written as literals. Computed values are flagged in the
   inspector and must be edited in code.
 - 3D renders through WebGL2. Up to 4 directional and 4 point lights cast shadows, glTF skins use up

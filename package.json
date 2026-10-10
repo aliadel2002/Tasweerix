@@ -15,7 +15,8 @@
     "tasweerix": "node packages/cli/bin/tasweerix.mjs",
     "studio": "node packages/cli/bin/tasweerix.mjs studio examples/promo",
     "format": "prettier --write .",
-    "examples": "bash scripts/check-examples.sh"
+    "examples": "bash scripts/check-examples.sh",
+    "build:plugin-host": "cmake -S native/plugin-host -B native/plugin-host/build && cmake --build native/plugin-host/build --config Release -j 4"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
