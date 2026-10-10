@@ -118,7 +118,7 @@ export class Renderer {
     const visit = (root: SceneNode) =>
       root.walk((n) => {
         if (n.maskSpec) visit(n.maskSpec.node);
-        if (n instanceof CompNode && n.inner) visit(n.inner.root);
+        if (n.kind === 'comp' && (n as CompNode).inner) visit((n as CompNode).inner!.root);
         const src = n.props as Record<string, unknown>;
         if (n.kind === 'image' && typeof src.src === 'string') tasks.push(this.assets.loadImage(src.src));
         for (const v of Object.values(src)) {
@@ -201,8 +201,8 @@ export class Renderer {
         }
         const cctx = node.meta.isRoot ? l : node.childCtx(l);
         if (node.maskSpec) visit(node.maskSpec.node, l, compDims);
-        if (node instanceof CompNode && node.inner) {
-          const inner = node.inner;
+        if (node.kind === 'comp' && (node as CompNode).inner) {
+          const inner = (node as CompNode).inner!;
           const ic = inner.contextAt(node.contentTime(l) * inner.fps, parentCtx.props);
           visit(inner.root, ic, inner);
         }
@@ -224,8 +224,8 @@ export class Renderer {
   /** Renders the children of `parent` (in parent's content time) onto target. */
   renderChildren(parent: SceneNode, childCtx: FrameContext, target: Ctx2D, parentMatrix: Mat2D, alpha: number): void {
     for (const child of parent.children) {
-      if (child instanceof AdjustmentNode) {
-        if (child.activeAt(childCtx.time)) this.applyAdjustment(child, child.localCtx(childCtx), target);
+      if (child.kind === 'adjustment') {
+        if (child.activeAt(childCtx.time)) this.applyAdjustment(child as AdjustmentNode, child.localCtx(childCtx), target);
         continue;
       }
       this.renderNode(child, childCtx, target, parentMatrix, alpha);
@@ -247,7 +247,7 @@ export class Renderer {
     if (!props.visible || props.opacity <= 0) return;
     const matrix = mat2d.multiply(parentMatrix, this.localMatrix(node, props, local));
     const blend = BLEND[props.blend] ?? (props.blend as GlobalCompositeOperation);
-    const hasAdjustChild = node.children.some((c) => c instanceof AdjustmentNode);
+    const hasAdjustChild = node.children.some((c) => c.kind === 'adjustment');
     const groupish = node.children.length > 0;
     const needsLayer =
       node.filters.length > 0 ||

@@ -70,6 +70,8 @@ export async function bundle(opts: BundleOptions): Promise<{ code: string; map?:
     nodePaths: [join(CLI_ROOT, 'node_modules')],
     outfile: opts.outfile ?? 'bundle.js',
     loader: { '.wasm': 'binary' },
+    // Selects bundle-friendly module variants (e.g. inlined wasm) via package.json conditions.
+    conditions: ['tasweerix-bundle'],
   });
   const out = result.outputFiles.find((f) => f.path.endsWith('.js'))!;
   return { code: out.text };

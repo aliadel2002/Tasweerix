@@ -16,6 +16,7 @@
     "@tasweerix/audio": "workspace:*",
     "@tasweerix/image": "workspace:*",
     "@tasweerix/type": "workspace:*",
-    "@tasweerix/motion": "workspace:*"
+    "@tasweerix/motion": "workspace:*",
+    "@tasweerix/illustrate": "workspace:*"
   }
 }

@@ -4,6 +4,9 @@ import { basename, dirname, extname, join, relative, resolve } from 'node:path';
 import { decodePcm, FFMPEG, run } from '@tasweerix/media/node';
 import { detectBeats, detectSilence, encodeWav, integratedLoudness, renderMix, truePeakDb } from '@tasweerix/audio';
 import { loadComposition } from './project';
+import { toSVG } from '@tasweerix/illustrate';
+import { loadFont, getFont, layoutWithFont } from '@tasweerix/type';
+import { FONT_FILE_RE, type ResolvedText } from '@tasweerix/render';
 import { render } from './render';
 
 const parseProps = (s?: string) => (s ? (JSON.parse(s) as Record<string, unknown>) : undefined);
@@ -18,9 +21,10 @@ export function registerCommands(program: Command): void {
     .option('--props <json>')
     .option('--stems', 'also write one file per bus and clip')
     .option('--sample-rate <n>', 'sample rate', Number)
+    .option('--root <dir>', 'project root for assets')
     .action(async (entry: string, o) => {
       const t0 = Date.now();
-      const { comp, env } = await loadComposition(entry, { comp: o.comp, props: parseProps(o.props) });
+      const { comp, env } = await loadComposition(entry, { comp: o.comp, props: parseProps(o.props), root: o.root });
       const res = await renderMix(comp, { load: (s, sr, ch) => env.loadPcm!(s, sr, ch), stems: !!o.stems, sampleRate: o.sampleRate });
       const out = resolve(o.output);
       mkdirSync(dirname(out), { recursive: true });
@@ -87,6 +91,39 @@ export function registerCommands(program: Command): void {
     });
 
   program
+    .command('svg')
+    .description('Export a frame as SVG (vector shapes, gradients, masks; text as glyph paths for font files)')
+    .argument('<entry>')
+    .option('-o, --output <file>', 'output file', 'out/frame.svg')
+    .option('-f, --frame <n>', 'frame number', Number, 0)
+    .option('-c, --comp <name>')
+    .option('--props <json>')
+    .option('--root <dir>', 'project root for assets')
+    .action(async (entry: string, o) => {
+      const { comp, env } = await loadComposition(entry, { comp: o.comp, props: parseProps(o.props), root: o.root });
+      // Load font files used by text nodes so text becomes exact glyph outlines.
+      const fonts = new Set<string>();
+      comp.root.walk((n) => {
+        // Compare by kind: the composition comes from a bundled copy of the core classes.
+        if (n.kind === 'text' && typeof n.props.font === 'string' && FONT_FILE_RE.test(n.props.font)) fonts.add(n.props.font);
+        return undefined;
+      });
+      for (const f of fonts) await loadFont(f, await env.loadBinary!(f));
+      const svg = toSVG(comp, o.frame, {
+        textToPath: (n, p) => {
+          const font = getFont(p.font);
+          if (!font) return null;
+          const layout = layoutWithFont(font, { ...(p as ResolvedText), text: String(p.text), fontFamily: p.font });
+          return layout.glyphs.map((g) => (g.pathData ? translate(g.pathData, g.x, g.y) : '')).join('');
+        },
+      });
+      const out = resolve(o.output);
+      mkdirSync(dirname(out), { recursive: true });
+      writeFileSync(out, svg);
+      console.error(`✔ ${out}`);
+    });
+
+  program
     .command('inspect')
     .description('Print the composition tree as JSON (timing, props, audio)')
     .argument('<entry>')
@@ -127,4 +164,9 @@ export function expandInputs(pattern: string): string[] {
   const dir = dirname(full);
   const re = new RegExp(`^${basename(full).replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.')}$`, 'i');
   return readdirSync(dir).filter((f) => re.test(f)).map((f) => join(dir, f)).sort();
+}
+
+function translate(d: string, dx: number, dy: number): string {
+  let i = 0;
+  return d.replace(/-?\d*\.?\d+(?:e-?\d+)?/gi, (m) => String(+(Number(m) + (i++ % 2 === 0 ? dx : dy)).toFixed(2)));
 }

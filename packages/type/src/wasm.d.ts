@@ -43,3 +43,6 @@ interface HarfBuzz {
   shape(font: HbFont, buffer: HbBuffer, features?: string): void;
   version_string(): string;
 }
+declare module '#hbwasm' {
+  export const loadWasm: () => Promise<Uint8Array>;
+}

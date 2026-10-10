@@ -21,7 +21,9 @@
     "playwright-core": "1.56.1",
     "tsx": "^4.19.2",
     "ws": "^8.18.0",
-    "@tasweerix/audio": "workspace:*"
+    "@tasweerix/audio": "workspace:*",
+    "@tasweerix/illustrate": "workspace:*",
+    "@tasweerix/type": "workspace:*"
   },
   "devDependencies": {
     "@types/ws": "^8.5.13"

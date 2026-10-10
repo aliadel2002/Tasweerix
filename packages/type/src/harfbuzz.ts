@@ -1,13 +1,13 @@
 import createHarfBuzz from 'harfbuzzjs/hb.js';
 import hbjs from 'harfbuzzjs/hbjs.js';
-import wasm from 'harfbuzzjs/hb.wasm';
+import { loadWasm } from '#hbwasm';
 
 let hbPromise: Promise<HarfBuzz> | undefined;
 let hbSync: HarfBuzz | undefined;
 
 /** Loads the HarfBuzz WebAssembly module (once). */
 export function loadHarfBuzz(): Promise<HarfBuzz> {
-  hbPromise ??= createHarfBuzz({ wasmBinary: wasm }).then((m) => (hbSync = hbjs(m)));
+  hbPromise ??= loadWasm().then((wasmBinary) => createHarfBuzz({ wasmBinary })).then((m) => (hbSync = hbjs(m)));
   return hbPromise;
 }
 

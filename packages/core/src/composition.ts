@@ -140,23 +140,24 @@ export class Composition {
   allAudioClips(): AudioClip[] {
     const implicit: AudioClip[] = [];
     this.root.walk((n) => {
-      if (n instanceof VideoNode && !n.muted && n.info?.hasAudio) {
-        const clip = new AudioClip(n.src, { bus: (n.meta.audioBus as string) ?? 'master' });
+      if (n.kind === 'video' && !(n as VideoNode).muted && (n as VideoNode).info?.hasAudio) {
+        const v = n as VideoNode;
+        const clip = new AudioClip(v.src, { bus: (v.meta.audioBus as string) ?? 'master' });
         clip.implicit = true;
-        clip.name = n.name ?? n.id;
-        clip.start = n.globalStart();
-        clip.trimIn = n.trimIn;
-        clip.trimOut = n.trimOut;
-        clip.info = n.info;
-        clip.loop = n.loop;
-        let speed = n.speed;
-        for (let p = n.parent; p; p = p.parent) speed *= p.speed;
+        clip.name = v.name ?? v.id;
+        clip.start = v.globalStart();
+        clip.trimIn = v.trimIn;
+        clip.trimOut = v.trimOut;
+        clip.info = v.info;
+        clip.loop = v.loop;
+        let speed = v.speed;
+        for (let p = v.parent; p; p = p.parent) speed *= p.speed;
         clip.speed = Math.abs(speed);
         clip.reverse = speed < 0;
-        if (n.duration !== undefined) clip.duration = n.duration;
-        const vol = n.props.volume;
+        if (v.duration !== undefined) clip.duration = v.duration;
+        const vol = v.props.volume;
         if (vol !== undefined) clip.volume = vol as Animatable<number>;
-        clip.meta.videoNode = n.id;
+        clip.meta.videoNode = v.id;
         implicit.push(clip);
       }
       return undefined;
