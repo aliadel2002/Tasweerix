@@ -19,5 +19,6 @@ tx still examples/stabilize/index.ts -f 75 -o "$OUT/stabilize.png"
 tx still examples/import-timeline/index.ts --root . -f 100 -o "$OUT/import-timeline.png"
 tx audio examples/podcast/index.ts -o "$OUT/podcast.mp3"
 tx audio examples/beat-viz/beat.ts -o "$OUT/beat.wav"
+tx audio examples/showreel/index.ts -o "$OUT/showreel.wav"
 # examples/ai needs Claude and speech-to-text credentials, so it is not rendered here.
 echo "All examples rendered to $OUT"

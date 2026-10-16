@@ -120,6 +120,12 @@ importers:
         specifier: workspace:*
         version: link:../../packages/tasweerix
 
+  examples/showreel:
+    dependencies:
+      tasweerix:
+        specifier: workspace:*
+        version: link:../../packages/tasweerix
+
   examples/smart-edit:
     dependencies:
       tasweerix:

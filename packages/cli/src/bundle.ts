@@ -39,6 +39,15 @@ function entryPlugin(entryFile: string): Plugin {
   };
 }
 
+const NODE_ESM_SHIMS = [
+  "import { createRequire as __txCreateRequire } from 'node:module';",
+  "import { dirname as __txDirname } from 'node:path';",
+  "import { fileURLToPath as __txFileURLToPath } from 'node:url';",
+  'const require = __txCreateRequire(import.meta.url);',
+  'const __filename = __txFileURLToPath(import.meta.url);',
+  'const __dirname = __txDirname(__filename);',
+].join('\n');
+
 export interface BundleOptions {
   entry: string;
   /** 'browser' bundles the export page runtime; 'node' bundles the module for Node tooling. */
@@ -69,8 +78,9 @@ export async function bundle(opts: BundleOptions): Promise<{ code: string; map?:
     external: isBrowser ? ['fs', 'path', 'module', 'url', 'crypto', 'worker_threads'] : ['node:*', 'playwright-core', 'esbuild'],
     // The Node bundle is ESM, where `require`/`__dirname` don't exist — but the HarfBuzz
     // (Emscripten) module takes its Node branch there and uses require('fs') and __dirname.
-    // Provide them so audio/interchange tooling works.
-    ...(isBrowser ? {} : { banner: { js: "import { createRequire } from 'node:module';\nimport { dirname } from 'node:path';\nimport { fileURLToPath } from 'node:url';\nconst require = createRequire(import.meta.url);\nconst __filename = fileURLToPath(import.meta.url);\nconst __dirname = dirname(__filename);" } }),
+    // Provide them so audio/interchange tooling works. The imports are aliased because
+    // esbuild can't see the banner: a project importing e.g. `dirname` would redeclare it.
+    ...(isBrowser ? {} : { banner: { js: NODE_ESM_SHIMS } }),
     nodePaths: [join(CLI_ROOT, 'node_modules')],
     outfile: opts.outfile ?? 'bundle.js',
     loader: { '.wasm': 'binary' },
