@@ -1,0 +1,11 @@
+1
+00:00:01,000 --> 00:00:03,200
+Every frame here is written in TypeScript.
+
+2
+00:00:03,600 --> 00:00:06,400
+Clips, color, type and sound — all code.
+
+3
+00:00:06,800 --> 00:00:09,500
+Render anywhere. Edit visually. Ship it.
