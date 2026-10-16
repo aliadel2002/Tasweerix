@@ -67,6 +67,10 @@ export async function bundle(opts: BundleOptions): Promise<{ code: string; map?:
     define: { 'process.env.NODE_ENV': '"production"', ...(opts.define ?? {}) },
     // Emscripten modules reference Node built-ins in branches never taken in browsers.
     external: isBrowser ? ['fs', 'path', 'module', 'url', 'crypto', 'worker_threads'] : ['node:*', 'playwright-core', 'esbuild'],
+    // The Node bundle is ESM, where `require`/`__dirname` don't exist — but the HarfBuzz
+    // (Emscripten) module takes its Node branch there and uses require('fs') and __dirname.
+    // Provide them so audio/interchange tooling works.
+    ...(isBrowser ? {} : { banner: { js: "import { createRequire } from 'node:module';\nimport { dirname } from 'node:path';\nimport { fileURLToPath } from 'node:url';\nconst require = createRequire(import.meta.url);\nconst __filename = fileURLToPath(import.meta.url);\nconst __dirname = dirname(__filename);" } }),
     nodePaths: [join(CLI_ROOT, 'node_modules')],
     outfile: opts.outfile ?? 'bundle.js',
     loader: { '.wasm': 'binary' },
