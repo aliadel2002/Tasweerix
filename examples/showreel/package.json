@@ -1,0 +1,1 @@
+{ "name": "example-showreel", "private": true, "type": "module", "dependencies": { "tasweerix": "workspace:*" } }
