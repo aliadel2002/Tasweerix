@@ -63,7 +63,8 @@ export function isLiteralLike(n: Node | null | undefined): boolean {
     case 'TemplateLiteral':
       return n.expressions.length === 0;
     case 'UnaryExpression':
-      return (n.operator === '-' || n.operator === '+') && isLiteralLike(n.argument);
+      // Only signed numbers (`-5`, `+2`, `- -1`); `-'a'` / `-[1]` / `-{}` are coercions, not GUI-editable literals.
+      return (n.operator === '-' || n.operator === '+') && (n.argument.type === 'NumericLiteral' || n.argument.type === 'UnaryExpression') && isLiteralLike(n.argument);
     case 'ArrayExpression':
       return n.elements.every((e: Node | null) => isLiteralLike(e));
     case 'ObjectExpression':
@@ -86,8 +87,8 @@ function evalLiteral(n: Node): unknown {
     case 'TemplateLiteral':
       return n.quasis[0]?.value?.cooked ?? n.quasis[0]?.value?.raw ?? '';
     case 'UnaryExpression': {
-      const v = Number(evalLiteral(n.argument));
-      return n.operator === '-' ? -v : +v;
+      const v = evalLiteral(n.argument) as number;
+      return n.operator === '-' ? -v : v;
     }
     case 'ArrayExpression':
       return n.elements.map((e: Node) => evalLiteral(e));
@@ -134,7 +135,9 @@ function findCall(ast: recast.types.ASTNode, line: number, column: number): Node
 }
 
 function propKey(p: Node): string | undefined {
-  if (p.type !== 'ObjectProperty' || p.computed) return undefined;
+  if (p.type !== 'ObjectProperty') return undefined;
+  // `{ ['at']: ... }` / `{ [0]: ... }` are static (nothing is evaluated); any other computed key is an expression.
+  if (p.computed && p.key.type !== 'StringLiteral' && p.key.type !== 'NumericLiteral') return undefined;
   if (p.key.type === 'Identifier') return p.key.name;
   if (p.key.type === 'StringLiteral') return p.key.value;
   if (p.key.type === 'NumericLiteral') return String(p.key.value);

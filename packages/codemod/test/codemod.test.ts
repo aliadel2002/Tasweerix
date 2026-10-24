@@ -64,6 +64,22 @@ describe('codemod', () => {
       value: { offset: [-10, 20], label: 'hi', ok: true, nil: null },
     });
   });
+  it('matches static computed keys like [\'at\'] but not expression keys', () => {
+    const src = `c.add(rect({ ['at']: [1, 2], [0]: 'zero', [k]: 3 }));\n`;
+    const pos = lineCol('rect(', 0, src);
+    expect(readProp(src, pos.line, pos.column, 'at')).toEqual({ present: true, computed: false, value: [1, 2] });
+    expect(readProp(src, pos.line, pos.column, '0')).toEqual({ present: true, computed: false, value: 'zero' });
+    expect(readProp(src, pos.line, pos.column, 'k')).toEqual({ present: false, computed: false });
+    const out = applyEdit(src, { kind: 'set-prop', ...pos, key: 'at', value: [5, 6] });
+    expect(out).toContain("['at']: [5, 6]");
+    expect(out.match(/\bat\b/g)).toHaveLength(1);
+  });
+  it('only treats signed numbers as literal unary expressions', () => {
+    const src = `c.add(rect({ a: - -3, b: -'x', c: -[1], d: -{ toString: 1, valueOf: 1 } }));\n`;
+    const pos = lineCol('rect(', 0, src);
+    expect(readProp(src, pos.line, pos.column, 'a')).toEqual({ present: true, computed: false, value: 3 });
+    for (const key of ['b', 'c', 'd']) expect(readProp(src, pos.line, pos.column, key)).toEqual({ present: true, computed: true });
+  });
   it('serializes values', () => {
     expect(valueToCode({ a: 1, 'b-c': [true, null, "it's"] })).toBe("{ a: 1, 'b-c': [true, null, 'it\\'s'] }");
   });
