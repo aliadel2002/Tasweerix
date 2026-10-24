@@ -13,8 +13,8 @@ export default composition({ width: 1280, height: 720 }, (c) => {
 });
 `;
 
-const lineCol = (needle: string, nth = 0) => {
-  const lines = SRC.split('\n');
+const lineCol = (needle: string, nth = 0, src = SRC) => {
+  const lines = src.split('\n');
   let count = 0;
   for (let i = 0; i < lines.length; i++) {
     let idx = -1;
@@ -46,6 +46,23 @@ describe('codemod', () => {
     expect(() => applyEdit(SRC, { kind: 'set-prop', ...lineCol('rect(', 2), key: 'at', value: [1, 2] })).toThrow(CodemodError);
     expect(readProp(SRC, lineCol('rect(', 2).line, lineCol('rect(', 2).column, 'at')).toEqual({ present: true, computed: true });
     expect(readProp(SRC, lineCol('rect(').line, lineCol('rect(').column, 'fill').value).toBe('#ff0055');
+  });
+  it('treats computed object keys as non-literal without executing them', () => {
+    const evilSrc = `c.add(rect({ meta: { [(globalThis as any).__pwned = 'yes']: 1 }, [at]: [10, 20] }));\n`;
+    const pos = lineCol('rect(', 0, evilSrc);
+    expect(readProp(evilSrc, pos.line, pos.column, 'meta')).toEqual({ present: true, computed: true });
+    expect((globalThis as any).__pwned).toBeUndefined();
+    expect(() => applyEdit(evilSrc, { kind: 'set-prop', ...pos, key: 'meta', value: {} })).toThrow(CodemodError);
+    expect(readProp(evilSrc, pos.line, pos.column, 'at')).toEqual({ present: false, computed: false });
+  });
+  it('evaluates nested literals and TS assertions safely in readProp', () => {
+    const tsSrc = `c.add(rect({ cfg: { offset: [-10, +20] as [number, number], label: \`hi\`, ok: true satisfies boolean, nil: null } }));\n`;
+    const pos = lineCol('rect(', 0, tsSrc);
+    expect(readProp(tsSrc, pos.line, pos.column, 'cfg')).toEqual({
+      present: true,
+      computed: false,
+      value: { offset: [-10, 20], label: 'hi', ok: true, nil: null },
+    });
   });
   it('serializes values', () => {
     expect(valueToCode({ a: 1, 'b-c': [true, null, "it's"] })).toBe("{ a: 1, 'b-c': [true, null, 'it\\'s'] }");

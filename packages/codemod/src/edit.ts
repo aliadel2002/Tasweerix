@@ -67,12 +67,37 @@ export function isLiteralLike(n: Node | null | undefined): boolean {
     case 'ArrayExpression':
       return n.elements.every((e: Node | null) => isLiteralLike(e));
     case 'ObjectExpression':
-      return n.properties.every((p: Node) => p.type === 'ObjectProperty' && isLiteralLike(p.value));
+      return n.properties.every((p: Node) => propKey(p) !== undefined && isLiteralLike(p.value));
     case 'TSAsExpression':
     case 'TSSatisfiesExpression':
       return isLiteralLike(n.expression);
   }
   return false;
+}
+
+function evalLiteral(n: Node): unknown {
+  switch (n.type) {
+    case 'NumericLiteral':
+    case 'StringLiteral':
+    case 'BooleanLiteral':
+      return n.value;
+    case 'NullLiteral':
+      return null;
+    case 'TemplateLiteral':
+      return n.quasis[0]?.value?.cooked ?? n.quasis[0]?.value?.raw ?? '';
+    case 'UnaryExpression': {
+      const v = Number(evalLiteral(n.argument));
+      return n.operator === '-' ? -v : +v;
+    }
+    case 'ArrayExpression':
+      return n.elements.map((e: Node) => evalLiteral(e));
+    case 'ObjectExpression':
+      return Object.fromEntries((n.properties as Node[]).map((p) => [propKey(p)!, evalLiteral(p.value)]));
+    case 'TSAsExpression':
+    case 'TSSatisfiesExpression':
+      return evalLiteral(n.expression);
+  }
+  throw new CodemodError(`Unsupported literal node: ${n.type}`);
 }
 
 /** Finds the innermost call expression whose callee position matches (or encloses) line:column. */
@@ -109,9 +134,10 @@ function findCall(ast: recast.types.ASTNode, line: number, column: number): Node
 }
 
 function propKey(p: Node): string | undefined {
-  if (p.type !== 'ObjectProperty') return undefined;
+  if (p.type !== 'ObjectProperty' || p.computed) return undefined;
   if (p.key.type === 'Identifier') return p.key.name;
   if (p.key.type === 'StringLiteral') return p.key.value;
+  if (p.key.type === 'NumericLiteral') return String(p.key.value);
   return undefined;
 }
 
@@ -183,6 +209,5 @@ export function readProp(source: string, line: number, column: number, key: stri
   const p = (obj?.properties as Node[] | undefined)?.find((x) => propKey(x) === key);
   if (!p) return { present: false, computed: false };
   if (!isLiteralLike(p.value)) return { present: true, computed: true };
-  // eslint-disable-next-line no-new-func
-  return { present: true, computed: false, value: new Function(`return (${recast.print(p.value).code});`)() };
+  return { present: true, computed: false, value: evalLiteral(p.value) };
 }
