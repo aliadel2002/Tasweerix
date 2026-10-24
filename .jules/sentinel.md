@@ -1,0 +1,4 @@
+## 2024-10-24 - [Code Injection via Eval-like Function constructor]
+**Vulnerability:** Found a Server-Side Code Execution vulnerability in `packages/codemod/src/edit.ts`. The `readProp` function dynamically evaluates properties using `new Function()` if they pass the `isLiteralLike` check. However, `isLiteralLike` did not check if object properties were computed (e.g., `{[console.log('pwned')]: 1}`).
+**Learning:** This allowed computed properties containing arbitrary code to be passed into `new Function()`, executing when `readProp` was called.
+**Prevention:** Ensure `isLiteralLike` explicitly validates that object properties are NOT computed before allowing them to be evaluated or treated as simple literals. Never use `new Function` with any string content that is derived from untrusted structures.

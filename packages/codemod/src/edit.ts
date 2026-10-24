@@ -67,7 +67,7 @@ export function isLiteralLike(n: Node | null | undefined): boolean {
     case 'ArrayExpression':
       return n.elements.every((e: Node | null) => isLiteralLike(e));
     case 'ObjectExpression':
-      return n.properties.every((p: Node) => p.type === 'ObjectProperty' && isLiteralLike(p.value));
+      return n.properties.every((p: Node) => p.type === 'ObjectProperty' && !p.computed && isLiteralLike(p.value));
     case 'TSAsExpression':
     case 'TSSatisfiesExpression':
       return isLiteralLike(n.expression);
