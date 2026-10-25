@@ -34,6 +34,7 @@ export default composition({ width: 1280, height: 720, fps: 30, duration: 4, bac
 let studio: Awaited<ReturnType<typeof startStudio>>;
 let browser: Browser;
 let page: Page;
+const logs: string[] = [];
 const file = () => readFileSync(join(proj, 'index.ts'), 'utf8');
 const waitFor = async (cond: () => boolean, ms = 10_000) => {
   const t0 = Date.now();
@@ -47,7 +48,7 @@ beforeAll(async () => {
   rmSync(proj, { recursive: true, force: true });
   mkdirSync(proj, { recursive: true });
   writeFileSync(join(proj, 'index.ts'), SRC);
-  studio = await startStudio({ root: proj, port: 0 });
+  studio = await startStudio({ root: proj, port: 0, log: (m) => logs.push(m) });
   browser = await launchBrowser();
   page = await browser.newPage({ viewport: { width: 1600, height: 1000 } });
   await page.goto(studio.url);
@@ -135,5 +136,14 @@ describe('studio (two-way editing)', () => {
     await page.waitForTimeout(800);
     await page.locator('header button[title^="Undo"]').click();
     await waitFor(() => file().includes("fill: '#22d3ee'"));
+  });
+
+  it('answers unexpected errors with the message only and logs the stack', async () => {
+    const r = await fetch(`${studio.url}/api/entry`, { method: 'POST', body: '{not json' });
+    expect(r.status).toBe(500);
+    const body = await r.text();
+    expect(body).toBeTruthy();
+    expect(body).not.toMatch(/\n\s+at /);
+    expect(logs.some((m) => m.startsWith('[studio] SyntaxError') && /\n\s+at /.test(m))).toBe(true);
   });
 });
