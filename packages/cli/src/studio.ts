@@ -258,7 +258,8 @@ export async function startStudio(opts: StudioOptions): Promise<{ url: string; c
       if (p.startsWith('/project/') && serveStatic(root, req, res, p.slice('/project/'.length))) return;
       res.writeHead(404).end('not found');
     } catch (e) {
-      if (!res.headersSent) res.writeHead(500, { 'content-type': 'text/plain' }).end(String((e as Error).stack ?? e));
+      log(`[studio] ${(e as Error)?.stack ?? e}`);
+      if (!res.headersSent) res.writeHead(500, { 'content-type': 'text/plain' }).end((e as Error)?.message || 'Internal Server Error');
     }
   });
   await rebuild();
