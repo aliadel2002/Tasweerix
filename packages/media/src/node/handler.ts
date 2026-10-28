@@ -45,7 +45,8 @@ export const MIME: Record<string, string> = {
 /** Resolves an asset path inside root (rejects traversal). URLs pass through for ffmpeg. */
 export function resolveAsset(root: string, src: string): string {
   if (/^https?:\/\//.test(src)) return src;
-  const clean = decodeURIComponent(src.replace(/^\/+/, ''));
+  // Security: decode before stripping slashes to prevent `%2f` from bypassing directory traversal checks
+  const clean = decodeURIComponent(src).replace(/^\/+/, '');
   const full = isAbsolute(clean) && clean.startsWith(root) ? normalize(clean) : resolve(root, clean);
   const r = resolve(root);
   if (full !== r && !full.startsWith(r + sep)) throw new Error(`Path escapes project root: ${src}`);
