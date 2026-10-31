@@ -3,7 +3,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import type { AddressInfo } from 'node:net';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { applyEdit, CodemodError, FrameMapper, inlineSourceMap, readProp, type Edit } from '@tasweerix/codemod';
-import { createMediaHandler, resolveAsset, serveStatic, MIME } from '@tasweerix/media/node';
+import { createMediaHandler, createRequestGuard, isLoopbackHost, resolveProjectPath, serveStatic, MIME, TOKEN_PARAM } from '@tasweerix/media/node';
 import { bundle, CLI_ROOT } from './bundle';
 import { render } from './render';
 import { renderAudioForExport } from './audio';
@@ -17,6 +17,16 @@ export interface StudioOptions {
   port?: number;
   host?: string;
   log?: (m: string) => void;
+  /** Access token (random by default). Every request must carry it; see createRequestGuard. */
+  token?: string;
+}
+
+/** A running studio. `url` is the server's address; `link` adds the access token and is what a browser opens. */
+export interface Studio {
+  url: string;
+  link: string;
+  token: string;
+  close(): Promise<void>;
 }
 
 const STUDIO_APP = resolve(CLI_ROOT, '../../apps/studio');
@@ -60,7 +70,7 @@ async function loadStudioApp(): Promise<{ js: string; css: string }> {
  * Starts the studio: a local web editor for a project with live preview, timeline, inspector,
  * code editor and two-way editing (canvas / timeline / inspector changes rewrite the source).
  */
-export async function startStudio(opts: StudioOptions): Promise<{ url: string; close(): Promise<void> }> {
+export async function startStudio(opts: StudioOptions): Promise<Studio> {
   const log = opts.log ?? (() => {});
   const root = resolve(opts.root);
   let entryRel = opts.entry ? relative(root, resolve(root, opts.entry)) : findEntry(root);
@@ -68,6 +78,16 @@ export async function startStudio(opts: StudioOptions): Promise<{ url: string; c
   await setupPlugins(root);
   const app = await loadStudioApp();
   const media = createMediaHandler({ root });
+  const host = opts.host ?? '127.0.0.1';
+  // Binding to a LAN address is deliberate, so any Host header is accepted there; the token still is required.
+  const guard = createRequestGuard({ allowAnyHost: !isLoopbackHost(host), token: opts.token });
+  const projectPath = (p: string) => resolveProjectPath(root, p);
+  /** A project-relative path for an entry file, which must exist inside the project. */
+  const entryPath = (p: string) => {
+    const abs = projectPath(p);
+    if (!/\.(ts|tsx|mts|js|jsx|mjs)$/.test(abs) || !existsSync(abs) || !statSync(abs).isFile()) throw new Error(`Not a script file in the project: ${p}`);
+    return relative(root, abs);
+  };
 
   // ---- preview bundle state
   let version = 0;
@@ -104,7 +124,7 @@ export async function startStudio(opts: StudioOptions): Promise<{ url: string; c
   const history: { path: string; before: string; after: string }[] = [];
   let historyPos = 0;
   const writeTracked = (path: string, content: string) => {
-    const abs = resolveAsset(root, path);
+    const abs = projectPath(path);
     const before = existsSync(abs) ? readFileSync(abs, 'utf8') : '';
     if (before === content) return;
     history.splice(historyPos);
@@ -130,6 +150,12 @@ export async function startStudio(opts: StudioOptions): Promise<{ url: string; c
     const url = new URL(req.url ?? '/', 'http://x');
     const p = url.pathname;
     try {
+      if (!guard.check(req, res)) return;
+      // Opening the link sets the cookie; drop the token from the address bar.
+      if (req.method === 'GET' && url.searchParams.has(TOKEN_PARAM)) {
+        url.searchParams.delete(TOKEN_PARAM);
+        return void res.writeHead(302, { location: `${url.pathname}${url.search}` }).end();
+      }
       if (p === '/' || p === '/index.html') {
         res.writeHead(200, { 'content-type': MIME['.html']! }).end(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Tasweerix Studio</title><link rel="stylesheet" href="/studio.css"></head><body><div id="app"></div><script type="module" src="/studio.js"></script></body></html>`);
         return;
@@ -154,16 +180,18 @@ export async function startStudio(opts: StudioOptions): Promise<{ url: string; c
           writeTracked(path, (await readBody(req)).toString('utf8'));
           return json(res, 200, { ok: true });
         }
-        return void res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' }).end(readFileSync(resolveAsset(root, path), 'utf8'));
+        // Read before writing the head, so a refused path still gets an error response.
+        const content = readFileSync(projectPath(path), 'utf8');
+        return void res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' }).end(content);
       }
       if (p === '/api/entry' && req.method === 'POST') {
-        entryRel = ((JSON.parse((await readBody(req)).toString()) as { entry: string }).entry);
+        entryRel = entryPath((JSON.parse((await readBody(req)).toString()) as { entry: string }).entry);
         await rebuild();
         return json(res, 200, { entry: entryRel });
       }
       if (p === '/api/upload' && req.method === 'POST') {
         const path = url.searchParams.get('path') ?? '';
-        const abs = resolveAsset(root, path);
+        const abs = projectPath(path);
         mkdirSync(dirname(abs), { recursive: true });
         writeFileSync(abs, await readBody(req));
         return json(res, 200, { path });
@@ -211,10 +239,10 @@ export async function startStudio(opts: StudioOptions): Promise<{ url: string; c
           host: 'studio',
           entry: entryRel,
           log: (m) => logs.push(m),
-          readFile: async (path) => readFileSync(resolveAsset(root, path), 'utf8'),
+          readFile: async (path) => readFileSync(projectPath(path), 'utf8'),
           writeFile: async (path, content) => writeTracked(path, content),
           render: async (o) => {
-            const r = await render({ entry: resolve(root, o.entry), output: resolve(root, o.output), root: o.root ? resolve(root, o.root) : root, codec: o.codec as never, scale: o.scale, concurrency: o.concurrency ?? 2, props: o.props, renderAudio: renderAudioForExport, onProgress: o.onProgress });
+            const r = await render({ entry: projectPath(o.entry), output: projectPath(o.output), root: o.root ? projectPath(o.root) : root, codec: o.codec as never, scale: o.scale, concurrency: o.concurrency ?? 2, props: o.props, renderAudio: renderAudioForExport, onProgress: o.onProgress });
             return { output: r.output, seconds: r.seconds };
           },
         };
@@ -229,13 +257,13 @@ export async function startStudio(opts: StudioOptions): Promise<{ url: string; c
         const undo = p === '/api/undo';
         const step = undo ? history[historyPos - 1] : history[historyPos];
         if (!step) return json(res, 200, { ok: false });
-        writeFileSync(resolveAsset(root, step.path), undo ? step.before : step.after);
+        writeFileSync(projectPath(step.path), undo ? step.before : step.after);
         historyPos += undo ? -1 : 1;
         return json(res, 200, { ok: true, path: step.path });
       }
       if (p === '/api/export' && req.method === 'POST') {
         const o = JSON.parse((await readBody(req)).toString()) as { output: string; codec?: string; scale?: number; still?: boolean; frame?: number; comp?: string; concurrency?: number };
-        const output = resolve(root, o.output);
+        const output = projectPath(o.output);
         json(res, 202, { output: relative(root, output) });
         broadcast({ type: 'export', state: 'start', output: relative(root, output) });
         render({
@@ -263,12 +291,16 @@ export async function startStudio(opts: StudioOptions): Promise<{ url: string; c
     }
   });
   await rebuild();
-  await new Promise<void>((r) => server.listen(opts.port ?? 3000, opts.host ?? '127.0.0.1', r));
+  await new Promise<void>((r) => server.listen(opts.port ?? 3000, host, r));
   const addr = server.address() as AddressInfo;
-  const url = `http://${addr.address}:${addr.port}`;
-  log(`Tasweerix Studio → ${url}  (project: ${root}, entry: ${entryRel})`);
+  const url = `http://${addr.family === 'IPv6' ? `[${addr.address}]` : addr.address}:${addr.port}`;
+  const link = guard.link(url);
+  log(`Tasweerix Studio → ${link}  (project: ${root}, entry: ${entryRel})`);
+  if (!isLoopbackHost(host)) log('[studio] Listening beyond this machine: anyone with the link above can edit the project and run code in it. Share it only with people you trust.');
   return {
     url,
+    link,
+    token: guard.token,
     async close() {
       watcher.close();
       for (const c of clients) c.end();

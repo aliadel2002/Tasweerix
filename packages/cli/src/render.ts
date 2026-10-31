@@ -125,7 +125,7 @@ export async function render(opts: RenderOptions): Promise<{ output: string; inf
     const baseInit = { comp: opts.comp, props: opts.props, scale: opts.scale, motionBlurSamples: opts.motionBlurSamples, hide: opts.hide, transparentBackground: opts.transparentBackground, depth: hdr ? 16 : opts.depth, gamut: hdr ? 'srgb' : inputGamut, hdr: !!hdr };
     const isStill = opts.still !== undefined;
     if (hdr && isStill && !/\.(png|avif)$/i.test(output)) throw new Error('HDR stills are written as .png (cICP tagged) or .avif');
-    const info = await openPage(first, `${server.url}/`, { ...baseInit, client: 0 });
+    const info = await openPage(first, server.pageUrl, { ...baseInit, client: 0 });
     log(`${info.name}: ${info.outWidth}x${info.outHeight} @ ${info.fps}fps, ${info.frameCount} frames (${info.duration.toFixed(2)}s)`);
 
     // ---------- Still image
@@ -171,7 +171,7 @@ export async function render(opts: RenderOptions): Promise<{ output: string; inf
           const b = await rb.launchAnother();
           browsers.push(b);
           const p = await b.newPage();
-          await openPage(p, `${server.url}/`, { ...baseInit, client: k + 1 });
+          await openPage(p, server.pageUrl, { ...baseInit, client: k + 1 });
           return p;
         }),
       )),

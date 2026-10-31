@@ -1,4 +1,6 @@
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { request } from 'node:http';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Browser, Page } from 'playwright-core';
@@ -51,7 +53,7 @@ beforeAll(async () => {
   studio = await startStudio({ root: proj, port: 0, log: (m) => logs.push(m) });
   browser = await launchBrowser();
   page = await browser.newPage({ viewport: { width: 1600, height: 1000 } });
-  await page.goto(studio.url);
+  await page.goto(studio.link);
   await page.waitForSelector('.tl-row');
   await page.waitForTimeout(500);
 }, 60_000);
@@ -139,11 +141,75 @@ describe('studio (two-way editing)', () => {
   });
 
   it('answers unexpected errors with the message only and logs the stack', async () => {
-    const r = await fetch(`${studio.url}/api/entry`, { method: 'POST', body: '{not json' });
+    const r = await fetch(`${studio.url}/api/entry`, { method: 'POST', body: '{not json', headers: { 'x-tasweerix-token': studio.token } });
     expect(r.status).toBe(500);
     const body = await r.text();
     expect(body).toBeTruthy();
     expect(body).not.toMatch(/\n\s+at /);
     expect(logs.some((m) => m.startsWith('[studio] SyntaxError') && /\n\s+at /.test(m))).toBe(true);
+  });
+});
+
+/** A raw request, so the Host / Origin headers a browser would send can be set. */
+function send(method: string, path: string, headers: Record<string, string> = {}, body = ''): Promise<{ status: number; body: string; headers: Record<string, unknown> }> {
+  const u = new URL(studio.url);
+  return new Promise((res, rej) => {
+    const r = request({ host: u.hostname, port: u.port, method, path, headers: { host: u.host, 'content-type': 'text/plain', ...headers } }, (resp) => {
+      let d = '';
+      resp.on('data', (c) => (d += c));
+      resp.on('end', () => res({ status: resp.statusCode!, body: d, headers: resp.headers }));
+    });
+    r.on('error', rej);
+    r.end(body);
+  });
+}
+
+describe('studio (access control)', () => {
+  const token = () => ({ 'x-tasweerix-token': studio.token });
+
+  it('refuses requests without the token, from other sites and with a foreign Host (DNS rebinding)', async () => {
+    expect((await send('GET', '/api/file?path=index.ts')).status).toBe(401);
+    expect((await send('POST', '/api/upload?path=evil.ts', {}, 'x')).status).toBe(401);
+    expect((await send('GET', '/__tx/probe?src=http://169.254.169.254/')).status).toBe(401);
+    expect((await send('GET', '/project/index.ts')).status).toBe(401);
+    // Even with the token: another origin, another local port, or a rebound host name.
+    expect((await send('POST', '/api/upload?path=evil.ts', { ...token(), origin: 'https://evil.example' }, 'x')).status).toBe(403);
+    expect((await send('GET', '/api/file?path=index.ts', { ...token(), 'sec-fetch-site': 'same-site' })).status).toBe(403);
+    expect((await send('GET', '/api/file?path=index.ts', { ...token(), host: `rebind.evil.example:${new URL(studio.url).port}` })).status).toBe(403);
+    expect(existsSync(join(proj, 'evil.ts'))).toBe(false);
+    expect((await send('GET', '/api/file?path=index.ts', token())).status).toBe(200);
+  });
+
+  it('turns the link into an HttpOnly SameSite=Strict cookie', async () => {
+    const r = await send('GET', `/?token=${studio.token}`, { 'sec-fetch-site': 'none' });
+    expect(r.status).toBe(302);
+    expect(r.headers.location).toBe('/');
+    const cookie = String(r.headers['set-cookie']);
+    expect(cookie).toMatch(/HttpOnly/);
+    expect(cookie).toMatch(/SameSite=Strict/);
+    expect((await send('GET', '/api/file?path=index.ts', { cookie: cookie.split(';')[0]! })).status).toBe(200);
+    expect((await send('GET', `/?token=wrong`)).status).toBe(401);
+  });
+
+  it('keeps file, entry and export paths inside the project', async () => {
+    const outside = join(tmpdir(), `tasweerix-outside-${process.pid}`);
+    mkdirSync(outside, { recursive: true });
+    writeFileSync(join(outside, 'secret.json'), '{"secret":"OUTSIDE"}');
+    try {
+      expect((await send('GET', '/api/file?path=../../package.json', token())).status).toBe(500);
+      expect((await send('POST', '/api/entry', token(), JSON.stringify({ entry: join(outside, 'secret.json') }))).status).toBe(500);
+      expect((await send('POST', '/api/entry', token(), JSON.stringify({ entry: '../../package.json' }))).status).toBe(500);
+      expect((await send('GET', '/api/state', token())).body).toContain('"entry":"index.ts"');
+      expect((await send('POST', '/api/export', token(), JSON.stringify({ output: join(outside, 'x.png'), still: true }))).status).toBe(500);
+      expect((await send('POST', '/api/export', token(), JSON.stringify({ output: '../x.png', still: true }))).status).toBe(500);
+      // A symlink inside the project that points outside it.
+      symlinkSync(outside, join(proj, 'link'));
+      expect((await send('GET', '/api/file?path=link/secret.json', token())).status).toBe(500);
+      expect((await send('POST', '/api/upload?path=link/evil.ts', token(), 'x')).status).toBe(500);
+      expect(existsSync(join(outside, 'evil.ts'))).toBe(false);
+    } finally {
+      rmSync(join(proj, 'link'), { force: true });
+      rmSync(outside, { recursive: true, force: true });
+    }
   });
 });

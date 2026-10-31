@@ -4,6 +4,15 @@
 tasweerix studio path/to/project      # --entry other.ts  --port 3000
 ```
 
+Open the link the command prints. It carries a random access token that changes every time the studio
+starts; the studio swaps it for a cookie, so bookmarks of `http://127.0.0.1:3000/` work until the next
+restart. Without the token, the studio refuses every request. So do requests from other websites and
+from host names other than `localhost` / `127.0.0.1` (which blocks DNS rebinding). File reads, writes,
+uploads and exports stay inside the project folder, and symlinks that lead out of it are refused.
+
+`--host 0.0.0.0` (or a LAN address) makes the studio reachable from other machines. Anyone who has the
+link can then edit the project and run code in it, so share it only with people you trust.
+
 The studio is a local web app with these parts:
 
 - **Preview.** The same renderer as exports draws the preview, at 25–100% resolution. It has play/pause,

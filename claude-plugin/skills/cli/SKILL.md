@@ -12,7 +12,8 @@ Pick the first that applies, from the project directory:
 1. **The Tasweerix monorepo** (a `pnpm-workspace.yaml` and `packages/cli/` exist): `pnpm tasweerix <command>`.
    No build step. Examples that use repo-level assets need `--root .`.
 2. **A project with the CLI installed** (`node_modules/.bin/tasweerix` exists): `npx tasweerix <command>`.
-3. **Otherwise**: `npx -y @tasweerix/cli <command>`.
+3. **Otherwise**: ask the user to install it (`npm i -D @tasweerix/cli`). Don't run `npx -y` with a
+   package that isn't installed: it downloads and runs whatever is published under that name.
 
 When the tasweerix MCP tools are connected, prefer them for what they cover (they return structured
 results, previews and progress): `doctor`, `read_docs`, `inspect_composition`, `render_still`,

@@ -7,23 +7,25 @@ import { Timeline } from './timeline';
 import './styles.css';
 
 type Vec2 = [number, number];
+/** A file name as a single-quoted string literal: quotes, backslashes and line breaks in names must not end up as code. */
+const lit = (s: string) => `'${s.replace(/[\\'\n\r\u2028\u2029]/g, (c) => (c === '\n' ? '\\n' : c === '\r' ? '\\r' : c === '\\' || c === "'" ? `\\${c}` : `\\u${c.charCodeAt(0).toString(16)}`))}'`;
 const ASSET_SNIPPET: Record<string, (p: string) => string> = {
-  png: (p) => `image('${p}')`,
-  jpg: (p) => `image('${p}')`,
-  jpeg: (p) => `image('${p}')`,
-  webp: (p) => `image('${p}')`,
-  gif: (p) => `image('${p}')`,
-  svg: (p) => `svgFile('${p}')`,
-  mp4: (p) => `video('${p}')`,
-  mov: (p) => `video('${p}')`,
-  webm: (p) => `video('${p}')`,
-  mp3: (p) => `c.audio('${p}')`,
-  wav: (p) => `c.audio('${p}')`,
-  m4a: (p) => `c.audio('${p}')`,
-  ttf: (p) => `text('Hello', { font: '${p}' })`,
-  otf: (p) => `text('Hello', { font: '${p}' })`,
-  cube: (p) => `fx.lut('${p}')`,
-  srt: (p) => `captions(parseSubtitles(await (await fetch('/project/${p}')).text()))`,
+  png: (p) => `image(${lit(p)})`,
+  jpg: (p) => `image(${lit(p)})`,
+  jpeg: (p) => `image(${lit(p)})`,
+  webp: (p) => `image(${lit(p)})`,
+  gif: (p) => `image(${lit(p)})`,
+  svg: (p) => `svgFile(${lit(p)})`,
+  mp4: (p) => `video(${lit(p)})`,
+  mov: (p) => `video(${lit(p)})`,
+  webm: (p) => `video(${lit(p)})`,
+  mp3: (p) => `c.audio(${lit(p)})`,
+  wav: (p) => `c.audio(${lit(p)})`,
+  m4a: (p) => `c.audio(${lit(p)})`,
+  ttf: (p) => `text('Hello', { font: ${lit(p)} })`,
+  otf: (p) => `text('Hello', { font: ${lit(p)} })`,
+  cube: (p) => `fx.lut(${lit(p)})`,
+  srt: (p) => `captions(parseSubtitles(await (await fetch(${lit(`/project/${encodeURI(p)}`)})).text()))`,
 };
 
 function App() {
