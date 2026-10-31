@@ -56,9 +56,9 @@ The plugin starts [`@tasweerix/mcp`](../packages/mcp), which gives Claude these 
 | `read_docs` | Any page of the Tasweerix docs |
 | `doctor` | The setup check |
 
-The server runs, in order of preference: the copy in this repository when Claude Code is opened
-inside it (after `pnpm install`), the project's installed `@tasweerix/mcp`, or the published package
-through `npx`. It uses the project's own `@tasweerix/cli` when there is one, so renders match the
+The server runs, in order of preference: the copy in this repository when Claude Code is opened at
+its root (after `pnpm install`), or the project's installed `@tasweerix/mcp` (`npm i -D @tasweerix/mcp`).
+It never downloads a server on its own. It uses the project's own `@tasweerix/cli` when there is one, so renders match the
 version the project pins. Set `TASWEERIX_MCP` to a server script or `TASWEERIX_CLI` to a CLI to
 override either.
 

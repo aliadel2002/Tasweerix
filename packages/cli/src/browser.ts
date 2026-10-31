@@ -14,7 +14,8 @@ export function findChromium(): string | undefined {
   return undefined;
 }
 
-const BASE_ARGS = ['--disable-web-security', '--autoplay-policy=no-user-gesture-required', '--font-render-hinting=none', '--force-color-profile=srgb', '--disable-lcd-text'];
+// The same-origin policy stays on: the page talks only to its own render server.
+const BASE_ARGS = ['--autoplay-policy=no-user-gesture-required', '--font-render-hinting=none', '--force-color-profile=srgb', '--disable-lcd-text'];
 
 export async function launchBrowser(extraArgs: string[] = []): Promise<Browser> {
   return chromium.launch({ executablePath: findChromium(), headless: true, args: [...BASE_ARGS, ...extraArgs] });

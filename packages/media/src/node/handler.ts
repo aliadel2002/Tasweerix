@@ -1,6 +1,6 @@
-import { createReadStream, existsSync, statSync } from 'node:fs';
+import { createReadStream, existsSync, realpathSync, statSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { extname, isAbsolute, normalize, resolve, sep } from 'node:path';
+import { dirname, extname, isAbsolute, normalize, resolve, sep } from 'node:path';
 import type { CanvasGamut } from '@tasweerix/core';
 import { decodeImage16, decodeImageLinear, decodePcm, interleave, isHdrSource, probe } from './ffmpeg';
 import { FrameServer, linearPlanesToFrame } from './frames';
@@ -50,6 +50,38 @@ export function resolveAsset(root: string, src: string): string {
   const full = isAbsolute(clean) && clean.startsWith(root) ? normalize(clean) : resolve(root, clean);
   const r = resolve(root);
   if (full !== r && !full.startsWith(r + sep)) throw new Error(`Path escapes project root: ${src}`);
+  return full;
+}
+
+const inside = (root: string, p: string) => p === root || p.startsWith(root + sep);
+
+/** The real path of `p`, or of its nearest existing ancestor joined with the rest (for files about to be created). */
+function realPathOf(p: string): string {
+  let dir = p;
+  const rest: string[] = [];
+  for (;;) {
+    try {
+      return resolve(realpathSync(dir), ...rest.reverse());
+    } catch {
+      const up = dirname(dir);
+      if (up === dir) return p;
+      rest.push(dir.slice(up.length).replace(/^[\\/]+/, ''));
+      dir = up;
+    }
+  }
+}
+
+/**
+ * Resolves a project file path for reading or writing project files (studio file API, uploads,
+ * exports): relative to root (or absolute), no URLs, no URL decoding, and the result (following
+ * symlinks) must stay inside root.
+ */
+export function resolveProjectPath(root: string, path: string): string {
+  if (typeof path !== 'string' || !path || path.includes('\0')) throw new Error(`Invalid project path: ${String(path)}`);
+  const r = resolve(root);
+  const full = resolve(r, path);
+  if (!inside(r, full)) throw new Error(`Path escapes project root: ${path}`);
+  if (!inside(realPathOf(r), realPathOf(full))) throw new Error(`Path escapes project root through a symlink: ${path}`);
   return full;
 }
 
@@ -197,8 +229,13 @@ export function serveStatic(root: string, req: IncomingMessage, res: ServerRespo
   const range = req.headers.range;
   if (range) {
     const m = /bytes=(\d*)-(\d*)/.exec(range);
-    const start = m?.[1] ? Number(m[1]) : 0;
-    const end = m?.[2] ? Number(m[2]) : size - 1;
+    // "bytes=-n" is the last n bytes.
+    const start = m?.[1] ? Number(m[1]) : m?.[2] ? Math.max(0, size - Number(m[2])) : 0;
+    const end = m?.[1] && m?.[2] ? Math.min(Number(m[2]), size - 1) : size - 1;
+    if (!m || start > end || start >= size) {
+      res.writeHead(416, { 'content-range': `bytes */${size}` }).end();
+      return true;
+    }
     res.writeHead(206, { 'content-type': type, 'content-range': `bytes ${start}-${end}/${size}`, 'accept-ranges': 'bytes', 'content-length': end - start + 1 });
     createReadStream(file, { start, end }).pipe(res);
   } else {

@@ -57,7 +57,7 @@ detected automatically, or set `TASWEERIX_CHROMIUM`). Camera RAW files also need
 ```sh
 pnpm install
 pnpm tasweerix init my-video -t video      # templates: video | photo | audio | motion | arabic | 3d
-pnpm tasweerix studio my-video             # open http://127.0.0.1:3000
+pnpm tasweerix studio my-video             # open the printed link (http://127.0.0.1:3000/?token=…)
 pnpm tasweerix render my-video/index.ts -o my-video/out/video.mp4
 ```
 

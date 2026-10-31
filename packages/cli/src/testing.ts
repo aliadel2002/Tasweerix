@@ -45,7 +45,7 @@ export async function renderFrames(opts: { entry?: string; source?: string; dir?
   const errors: string[] = [];
   page.on('pageerror', (e) => errors.push(e.stack ?? e.message));
   try {
-    await page.goto(`${server.url}/`);
+    await page.goto(server.pageUrl);
     await page.waitForFunction(() => !!(window as any).__tx || !!(window as any).__txError, null, { timeout: 30_000 });
     const info = (await page.evaluate((o) => (window as any).__tx.init(o), { client: 0, scale: opts.scale, comp: opts.comp, props: opts.props, depth: opts.depth, gamut: opts.gamut, hdr: opts.hdr })) as Record<string, any>;
     for (const f of opts.frames) await page.evaluate((n) => (window as any).__tx.frame(n), f);

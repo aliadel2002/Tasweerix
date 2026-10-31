@@ -5,3 +5,4 @@ export * from './env';
 export * from './analysis';
 export * from './icc';
 export * from './raw';
+export * from './guard';
