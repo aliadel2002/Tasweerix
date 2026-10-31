@@ -55,11 +55,17 @@ console.log("✔ MCP server reads the docs and renders a frame");'
 
 echo "Starting the studio"
 node_modules/.bin/tasweerix studio . --entry hello.ts --port 4873 > studio.log 2>&1 &
-for _ in $(seq 60); do curl -sf http://127.0.0.1:4873/studio.js -o studio.js && break; sleep 1; done
+# The studio prints a link with its access token once it listens.
+for _ in $(seq 60); do grep -q 'token=' studio.log && break; sleep 1; done
+TOKEN=$(grep -o 'token=[A-Za-z0-9_-]*' studio.log | head -1 | cut -d= -f2)
+test -n "$TOKEN" || { cat studio.log; echo "✖ studio did not print its link"; exit 1; }
+test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:4873/studio.js)" = 401 || { echo "✖ studio served a request without its token"; exit 1; }
+AUTH=(-H "x-tasweerix-token: $TOKEN")
+curl -sf "${AUTH[@]}" http://127.0.0.1:4873/studio.js -o studio.js
 test -s studio.js || { cat studio.log; echo "✖ studio did not serve its UI"; exit 1; }
-curl -sf http://127.0.0.1:4873/api/state | node -e '
+curl -sf "${AUTH[@]}" http://127.0.0.1:4873/api/state | node -e '
 const s = JSON.parse(require("fs").readFileSync(0, "utf8"));
 if (s.error) { console.error(`✖ studio preview failed: ${s.error}`); process.exit(1); }'
-curl -sf http://127.0.0.1:4873/api/preview.js -o preview.js && test -s preview.js
-echo "✔ studio serves its UI and preview"
+curl -sf "${AUTH[@]}" http://127.0.0.1:4873/api/preview.js -o preview.js && test -s preview.js
+echo "✔ studio serves its UI and preview, and only with its token"
 echo "Packed packages work outside the monorepo"
