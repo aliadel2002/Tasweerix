@@ -51,9 +51,20 @@ function listFiles(root: string, dir = root, out: { path: string; size: number }
   return out;
 }
 
+/** Maximum accepted request body (uploads, file writes, API posts). */
+const MAX_BODY_BYTES = 100 * 1024 * 1024;
+
 async function readBody(req: IncomingMessage): Promise<Buffer> {
   const chunks: Buffer[] = [];
-  for await (const c of req) chunks.push(c as Buffer);
+  let size = 0;
+  for await (const c of req) {
+    size += (c as Buffer).length;
+    if (size > MAX_BODY_BYTES) {
+      req.destroy();
+      throw new Error(`Request body too large (limit ${MAX_BODY_BYTES} bytes)`);
+    }
+    chunks.push(c as Buffer);
+  }
   return Buffer.concat(chunks);
 }
 

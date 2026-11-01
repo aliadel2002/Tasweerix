@@ -13,11 +13,11 @@
     "./package.json": "./package.json"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.32.1",
+    "@modelcontextprotocol/sdk": "^1.32.2",
     "@tasweerix/ai": "workspace:*",
     "@tasweerix/cli": "workspace:*",
     "tsx": "^4.19.2",
-    "zod": "^4.6.5"
+    "zod": "^4.6.6"
   },
   "files": [
     "dist"
