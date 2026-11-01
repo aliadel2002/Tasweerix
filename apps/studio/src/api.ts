@@ -87,7 +87,10 @@ export const api = {
   undo: () => fetch('/api/undo', { method: 'POST' }).then((r) => r.json()),
   redo: () => fetch('/api/redo', { method: 'POST' }).then((r) => r.json()),
   setEntry: (entry: string) => fetch('/api/entry', { method: 'POST', body: JSON.stringify({ entry }) }),
-  upload: (path: string, file: Blob) => fetch(`/api/upload?path=${encodeURIComponent(path)}`, { method: 'POST', body: file }),
+  async upload(path: string, file: Blob): Promise<void> {
+    const r = await fetch(`/api/upload?path=${encodeURIComponent(path)}`, { method: 'POST', body: file });
+    if (!r.ok) throw new Error(`Upload of ${path} failed: ${(await r.text()) || r.status}`);
+  },
   export: (o: Record<string, unknown>) => fetch('/api/export', { method: 'POST', body: JSON.stringify(o) }).then((r) => r.json()),
   /** Plugin commands that offer a studio action (e.g. the AI assistant). */
   commands: (): Promise<StudioCommand[]> => fetch('/api/commands').then((r) => r.json()),

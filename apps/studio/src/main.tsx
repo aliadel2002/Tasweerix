@@ -331,7 +331,11 @@ function App() {
   // ---------------------------------------------------------------- drop to upload assets
   const onDrop = async (e: DragEvent) => {
     e.preventDefault();
-    for (const f of Array.from(e.dataTransfer?.files ?? [])) await api.upload(`assets/${f.name}`, f);
+    try {
+      for (const f of Array.from(e.dataTransfer?.files ?? [])) await api.upload(`assets/${f.name}`, f);
+    } catch (err) {
+      setError(String((err as Error).message ?? err));
+    }
   };
 
   const dims = info ? { w: info.width, h: info.height } : { w: 1920, h: 1080 };

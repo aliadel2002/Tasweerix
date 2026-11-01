@@ -1,6 +1,7 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, watch, writeFileSync } from 'node:fs';
+import { createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, watch, writeFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { pipeline } from 'node:stream/promises';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { applyEdit, CodemodError, FrameMapper, inlineSourceMap, readProp, type Edit } from '@tasweerix/codemod';
 import { createMediaHandler, createRequestGuard, isLoopbackHost, resolveProjectPath, serveStatic, MIME, TOKEN_PARAM } from '@tasweerix/media/node';
@@ -51,7 +52,7 @@ function listFiles(root: string, dir = root, out: { path: string; size: number }
   return out;
 }
 
-/** Maximum accepted request body (uploads, file writes, API posts). */
+/** Maximum buffered request body (file writes, API posts). Uploads stream to disk instead; see writeUpload. */
 const MAX_BODY_BYTES = 100 * 1024 * 1024;
 
 async function readBody(req: IncomingMessage): Promise<Buffer> {
@@ -66,6 +67,21 @@ async function readBody(req: IncomingMessage): Promise<Buffer> {
     chunks.push(c as Buffer);
   }
   return Buffer.concat(chunks);
+}
+
+/**
+ * Stream an upload straight to disk, so media files of any size work without being held in memory.
+ * Writes to a temp file first, so a failed or aborted upload never leaves a truncated asset behind.
+ */
+async function writeUpload(req: IncomingMessage, abs: string): Promise<void> {
+  const tmp = `${abs}.${process.pid}-${Date.now()}.upload`;
+  try {
+    await pipeline(req, createWriteStream(tmp));
+    renameSync(tmp, abs);
+  } catch (e) {
+    rmSync(tmp, { force: true });
+    throw e;
+  }
 }
 
 const json = (res: ServerResponse, code: number, body: unknown) => res.writeHead(code, { 'content-type': 'application/json' }).end(JSON.stringify(body));
@@ -204,7 +220,7 @@ export async function startStudio(opts: StudioOptions): Promise<Studio> {
         const path = url.searchParams.get('path') ?? '';
         const abs = projectPath(path);
         mkdirSync(dirname(abs), { recursive: true });
-        writeFileSync(abs, await readBody(req));
+        await writeUpload(req, abs);
         return json(res, 200, { path });
       }
       if (p === '/api/locate' && req.method === 'POST') {
