@@ -151,7 +151,7 @@ describe('studio (two-way editing)', () => {
 });
 
 /** A raw request, so the Host / Origin headers a browser would send can be set. */
-function send(method: string, path: string, headers: Record<string, string> = {}, body = ''): Promise<{ status: number; body: string; headers: Record<string, unknown> }> {
+function send(method: string, path: string, headers: Record<string, string> = {}, body: string | Buffer = ''): Promise<{ status: number; body: string; headers: Record<string, unknown> }> {
   const u = new URL(studio.url);
   return new Promise((res, rej) => {
     const r = request({ host: u.hostname, port: u.port, method, path, headers: { host: u.host, 'content-type': 'text/plain', ...headers } }, (resp) => {
@@ -211,5 +211,12 @@ describe('studio (access control)', () => {
       rmSync(join(proj, 'link'), { force: true });
       rmSync(outside, { recursive: true, force: true });
     }
+  });
+
+  it('streams uploads larger than the buffered-body cap to disk', async () => {
+    const big = Buffer.alloc(101 * 1024 * 1024, 7);
+    expect((await send('POST', '/api/upload?path=assets/big.bin', token(), big)).status).toBe(200);
+    expect(readFileSync(join(proj, 'assets/big.bin')).equals(big)).toBe(true);
+    rmSync(join(proj, 'assets/big.bin'));
   });
 });

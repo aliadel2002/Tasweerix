@@ -12,3 +12,8 @@ packages/*/test/.tmp/
 packages/*/test/.tmp-*/
 native/plugin-host/build/
 packages/ai/docs/
+
+# Local secrets - never commit these
+.env
+.env.*
+.vscode/

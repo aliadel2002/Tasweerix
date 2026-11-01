@@ -50,7 +50,9 @@ export async function startRenderServer(opts: RenderServerOptions): Promise<Rend
       if (!res.headersSent) res.writeHead(500, { 'content-type': 'text/plain' }).end((e as Error)?.message || 'Internal Server Error');
     }
   });
-  const wss = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 * 1024 });
+  // Frame messages: up to 8K RGBA/HDR stills fit far below this; the limit bounds memory if a
+  // client (who already has the access token) misbehaves.
+  const wss = new WebSocketServer({ noServer: true, maxPayload: 256 * 1024 * 1024 });
   const sockets = new Map<number, WebSocket>();
   server.on('upgrade', (req, socket, head) => {
     const url = new URL(req.url ?? '/', 'http://x');
