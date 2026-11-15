@@ -95,7 +95,7 @@ describe('studio (two-way editing)', () => {
 
   it('edits a prop from the inspector', async () => {
     await page.waitForSelector('.inspector .insp-grid');
-    const input = page.locator('.insp-grid label', { hasText: /^radius$/ }).locator('xpath=following-sibling::*[1]');
+    const input = page.locator('.insp-grid label', { hasText: /^radius$/ }).locator('xpath=following-sibling::*[1]/descendant-or-self::input');
     await input.click();
     await input.fill('48');
     await input.press('Enter');
@@ -147,6 +147,115 @@ describe('studio (two-way editing)', () => {
     expect(body).toBeTruthy();
     expect(body).not.toMatch(/\n\s+at /);
     expect(logs.some((m) => m.startsWith('[studio] SyntaxError') && /\n\s+at /.test(m))).toBe(true);
+  });
+});
+
+const SRC2 = `import { composition, rect, text } from 'tasweerix';
+
+export default composition({ width: 1280, height: 720, fps: 30, duration: 4, background: '#101827' }, (c) => {
+  c.add(rect({ size: [300, 160], fill: '#22d3ee', at: [400, 300], duration: 2 }));
+  c.add(text('Studio', { size: 90, weight: 800, fill: '#ffffff', at: [640, 600] }));
+});
+`;
+
+describe('studio (editing surface)', () => {
+  const editorText = () => page.locator('.cm-content').innerText();
+  const center = async (selector: string, nth = 0) => {
+    const b = (await page.locator(selector).nth(nth).boundingBox())!;
+    return [b.x + b.width / 2, b.y + b.height / 2] as const;
+  };
+  const drag = async (from: readonly [number, number], to: readonly [number, number]) => {
+    await page.mouse.move(from[0], from[1]);
+    await page.mouse.down();
+    await page.mouse.move(to[0], to[1], { steps: 6 });
+    await page.mouse.up();
+  };
+
+  beforeAll(async () => {
+    writeFileSync(join(proj, 'index.ts'), SRC2);
+    await page.waitForFunction(() => document.querySelector('.cm-content')?.textContent?.includes('duration: 2 }'), null, { timeout: 15_000 });
+    await page.waitForTimeout(800);
+  });
+
+  it('names timeline rows after their content and labels every button', async () => {
+    expect(await page.locator('.tl-name').allInnerTexts()).toEqual(['rect', 'Studio']);
+    const unnamed = await page.evaluate(() => [...document.querySelectorAll('button')].filter((b) => !b.getAttribute('aria-label') && !b.textContent?.trim()).length);
+    expect(unnamed).toBe(0);
+    // Play and next-frame are different controls with different names.
+    const names = await page.locator('.transport button').evaluateAll((list) => list.map((b) => b.getAttribute('aria-label')));
+    expect(new Set(names).size).toBe(names.length);
+  });
+
+  it('keeps text typed just before a canvas edit, and the canvas edit too', async () => {
+    await page.locator('.cm-content').click();
+    await page.keyboard.press('Control+End');
+    await page.keyboard.type('// typed');
+    // No pause: the typed text is still unsaved when the drag rewrites the source.
+    await drag(await toScreen(400, 300), await toScreen(520, 340));
+    await waitFor(() => file().includes('at: [520, 340]') && file().includes('// typed'));
+    await page.waitForFunction(() => /at: \[520, 340\]/.test(document.querySelector('.cm-content')?.textContent ?? ''), null, { timeout: 10_000 });
+    expect(await editorText()).toContain('// typed');
+    // Nothing writes the older text back afterwards.
+    await page.waitForTimeout(1500);
+    expect(file()).toContain('at: [520, 340]');
+    expect(file()).toContain('// typed');
+  });
+
+  it('undoes a canvas edit with the keyboard from inside the code editor', async () => {
+    await page.locator('.cm-content').click();
+    await page.keyboard.press('Control+z');
+    await waitFor(() => file().includes('at: [400, 300]'));
+    expect(file()).toContain('// typed');
+    await page.waitForFunction(() => /at: \[400, 300\]/.test(document.querySelector('.cm-content')?.textContent ?? ''), null, { timeout: 10_000 });
+    await page.keyboard.press('Control+Shift+Z');
+    await waitFor(() => file().includes('at: [520, 340]'));
+    await page.waitForTimeout(800);
+  });
+
+  it('scales and rotates an element with the canvas handles', async () => {
+    const [ox, oy] = await toScreen(520, 340);
+    await page.mouse.click(ox, oy);
+    await page.waitForSelector('.sel-handle.scale');
+    // Bottom-right corner, pulled to one and a half times its distance from the element's anchor.
+    const corner = await center('.sel-handle.scale', 2);
+    await drag(corner, [ox + (corner[0] - ox) * 1.5, oy + (corner[1] - oy) * 1.5]);
+    await waitFor(() => /scale: 1\.5\b/.test(file()));
+    await page.waitForTimeout(1000);
+    // The rotate handle sits above the element; a quarter turn puts it to the right.
+    const knob = await center('.sel-handle.rotate');
+    const r = Math.hypot(knob[0] - ox, knob[1] - oy);
+    await drag(knob, [ox + r, oy]);
+    await waitFor(() => /rotation: 90\b/.test(file()));
+    await page.waitForTimeout(1000);
+  });
+
+  it('trims a clip from its left edge, keeping its end where it was', async () => {
+    const px = await page.evaluate(() => Number((document.querySelector('.tl-toolbar input') as HTMLInputElement).value));
+    const edge = await center('.tl-trim.start', 0);
+    await drag(edge, [edge[0] + px * 0.5, edge[1]]);
+    await waitFor(() => file().includes('start: 0.5') && file().includes('duration: 1.5'));
+    await page.waitForTimeout(800);
+  });
+
+  it('moves a focused clip by one frame with the arrow keys', async () => {
+    await page.locator('.tl-bar').first().focus();
+    await page.keyboard.press('ArrowRight');
+    await waitFor(() => file().includes('start: 0.533'));
+  });
+
+  it('switches the interface to Arabic, mirroring panels but not the timeline or code', async () => {
+    await page.locator('button.lang').click();
+    await page.waitForFunction(() => document.documentElement.dir === 'rtl');
+    expect(await page.evaluate(() => document.documentElement.lang)).toBe('ar');
+    expect(await page.locator('.files .panel-title').innerText()).toBe('المشروع');
+    expect(await page.locator('.timeline').getAttribute('dir')).toBe('ltr');
+    expect(await page.locator('.code').getAttribute('dir')).toBe('ltr');
+    const files = (await page.locator('.files').boundingBox())!;
+    const stage = (await page.locator('.stage').boundingBox())!;
+    expect(files.x).toBeGreaterThan(stage.x);
+    await page.locator('button.lang').click();
+    await page.waitForFunction(() => document.documentElement.dir === 'ltr');
+    expect(await page.locator('.files .panel-title').innerText()).toMatch(/project/i);
   });
 });
 
