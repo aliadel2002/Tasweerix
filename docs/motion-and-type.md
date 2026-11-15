@@ -33,6 +33,33 @@ text(`أهلاً بكم في Tasweerix ${arabicDigits(2026)}`, { font: 'assets/C
 `variations` (for example `{ wght: 650 }`) pass through to HarfBuzz. Without a font file, text uses the
 browser's shaping. RTL text then animates per word, so joining stays intact.
 
+### Arabic presets
+
+`arabicFx` holds kinetic presets made for joining scripts. They move whole letters (a letter travels with
+its marks) or words, always in reading order, and never add tracking, because spacing letters apart is
+what breaks a joined word.
+
+```ts
+text('تصوير بالكود', { font: 'assets/Cairo-Bold.ttf', size: 140 }).glyphs(arabicFx.write(), arabicFx.lift({ start: 5 }));
+text('أهلاً بكم', { font: 'assets/Cairo-Bold.ttf' }).glyphs(arabicFx.rise(), arabicFx.breathe());
+bilingualTitle('تصوير', 'Image-making', { font: 'assets/Cairo-Bold.ttf', at: [960, 540] });
+```
+
+| Preset | What it does |
+| --- | --- |
+| `write` | Each letter is wiped in from its right edge, one after another, like a pen stroke |
+| `ink` | Letters sharpen out of a soft blur |
+| `settle` | Letters drop a short way and settle on the baseline |
+| `rise` | Words rise into place one at a time |
+| `swing` | Words swing down as if hung from the line above |
+| `lift` | Exit: letters lift away, last letter first |
+| `breathe` | A slow swell that passes through the words, for text that stays on screen |
+
+All take the same options as `textFx` presets (`start`, `stagger`, `duration`, `ease`, `by`, `from`).
+`bilingualTitle(arabic, latin, options)` builds a title card: the Arabic line written on, a rule drawn
+from the right, and the Latin line rising beneath. The Arabic line can be a `kashidaText(...)` driver.
+The same presets are at `motion.arabic` and `motion.bilingualTitle`.
+
 ## Behaviors
 
 ```ts

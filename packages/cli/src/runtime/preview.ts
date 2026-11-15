@@ -36,6 +36,33 @@ export interface TimelineRow {
   frames: string[];
   keyframes: { prop: string; times: number[]; frames: string[] }[];
   parent?: string;
+  /** Has child rows (the studio can collapse it). */
+  group: boolean;
+  /** Source media behind the clip, for thumbnails: `in` is the source time at the clip's start. */
+  media?: { kind: 'video' | 'image'; src: string; in: number; out?: number; speed: number };
+}
+
+/** What a row is called on the timeline: its own name, else its file or its words, else its kind. */
+function rowLabel(n: SceneNode): string {
+  if (n.name) return n.name;
+  const p = n.props as Record<string, unknown>;
+  if ((n.kind === 'video' || n.kind === 'image' || n.kind === 'photo') && typeof p.src === 'string' && p.src) return p.src.split('/').pop()!;
+  if (n.kind === 'text' && typeof p.text === 'string' && p.text.trim()) {
+    const t = p.text.trim().replace(/\s+/g, ' ');
+    return t.length > 32 ? `${t.slice(0, 31)}…` : t;
+  }
+  return n.kind;
+}
+
+function rowMedia(n: SceneNode): TimelineRow['media'] {
+  const src = (n.props as Record<string, unknown>).src;
+  if (typeof src !== 'string' || !src) return undefined;
+  if (n.kind === 'video') {
+    const v = n as unknown as { trimIn?: number; trimOut?: number };
+    return { kind: 'video', src, in: v.trimIn ?? 0, out: v.trimOut, speed: n.speed || 1 };
+  }
+  if (n.kind === 'image') return { kind: 'image', src, in: 0, speed: 1 };
+  return undefined;
 }
 
 let comp: Composition | undefined;
@@ -183,7 +210,7 @@ const api = {
       for (const [k, v] of Object.entries(n.props)) {
         if (isTrack(v)) keyframes.push({ prop: k, times: v.keys.map((kf) => start + kf.t), frames: v.source?.frames ?? [] });
       }
-      rows.push({ id: n.id, name: n.name ?? n.kind, kind: n.kind, depth, start, end: Number.isFinite(d) ? start + d * parentScale : comp!.duration, frames: n.source?.frames ?? [], keyframes, parent: n.parent?.meta.isRoot ? undefined : n.parent?.id });
+      rows.push({ id: n.id, name: rowLabel(n), kind: n.kind, depth, start, end: Number.isFinite(d) ? start + d * parentScale : comp!.duration, frames: n.source?.frames ?? [], keyframes, parent: n.parent?.meta.isRoot ? undefined : n.parent?.id, group: depth < 3 && n.children.length > 0, media: rowMedia(n) });
       if (depth < 3) n.children.forEach((c) => visit(c, depth + 1));
     };
     comp.root.children.forEach((c) => visit(c, 0));
@@ -203,7 +230,7 @@ const api = {
       props[k] = v;
     }
     for (const [k, v] of Object.entries(n.props)) if (typeof v === 'function' || isTrack(v)) animated.push(k);
-    return { id: n.id, kind: n.kind, name: n.name, start: n.start, duration: Number.isFinite(n.effectiveDuration()) ? n.effectiveDuration() : null, props, animated, explicit: Object.keys(n.props), frames: n.source?.frames ?? [], trackFrames: Object.fromEntries(Object.entries(n.props).filter(([, v]) => isTrack(v)).map(([k, v]) => [k, (v as { source?: { frames: string[] } }).source?.frames ?? []])), filters: n.filters.map((f) => f.kind) };
+    return { id: n.id, kind: n.kind, name: n.name, start: n.start, fixedDuration: n.duration !== undefined, duration: Number.isFinite(n.effectiveDuration()) ? n.effectiveDuration() : null, props, animated, explicit: Object.keys(n.props), frames: n.source?.frames ?? [], trackFrames: Object.fromEntries(Object.entries(n.props).filter(([, v]) => isTrack(v)).map(([k, v]) => [k, (v as { source?: { frames: string[] } }).source?.frames ?? []])), filters: n.filters.map((f) => f.kind) };
   },
   /** Topmost node under a composition-space point. */
   hitTest(x: number, y: number, frame: number): string | null {
@@ -220,6 +247,12 @@ const api = {
   bounds(id: string, frame: number): Vec2[] | null {
     const n = nodes.get(id);
     return n ? quad(n, frame) : null;
+  },
+  /** Composition-space point a node scales and rotates about (its anchor). */
+  origin(id: string, frame: number): Vec2 | null {
+    const n = nodes.get(id);
+    const w = n && !n.meta.is3d ? world(n, frame) : null;
+    return w ? mat2d.apply(w.m, (w.props.anchor as Vec2 | undefined) ?? [0, 0]) : null;
   },
   /** Position of a node's parent space for converting drags into prop values. */
   parentMatrix(id: string, frame: number): Mat2D | null {

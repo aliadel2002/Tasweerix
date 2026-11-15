@@ -184,7 +184,7 @@ export async function startStudio(opts: StudioOptions): Promise<Studio> {
         return void res.writeHead(302, { location: `${url.pathname}${url.search}` }).end();
       }
       if (p === '/' || p === '/index.html') {
-        res.writeHead(200, { 'content-type': MIME['.html']! }).end(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Tasweerix Studio</title><link rel="stylesheet" href="/studio.css"></head><body><div id="app"></div><script type="module" src="/studio.js"></script></body></html>`);
+        res.writeHead(200, { 'content-type': MIME['.html']! }).end(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Tasweerix Studio</title><link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect x='2' y='2' width='28' height='28' rx='7' fill='%23f2a93b'/><path d='M24 11.500c0 7-2.500 10.500-8.500 10.500C10 22 8 19.800 8 16' fill='none' stroke='%231b1204' stroke-width='3.200' stroke-linecap='round'/><path d='M13.500 7.200l2.100 2.100-2.100 2.100-2.100-2.100z M17.700 7.200l2.100 2.100-2.100 2.100-2.100-2.100z' fill='%231b1204'/></svg>"><link rel="stylesheet" href="/studio.css"></head><body><div id="app"></div><script type="module" src="/studio.js"></script></body></html>`);
         return;
       }
       if (p === '/studio.js') return void res.writeHead(200, { 'content-type': MIME['.js']! }).end(app.js);
@@ -235,13 +235,14 @@ export async function startStudio(opts: StudioOptions): Promise<Studio> {
         return json(res, 200, readProp(readFileSync(resolve(root, loc.file), 'utf8'), loc.line, loc.column, key));
       }
       if (p === '/api/edit' && req.method === 'POST') {
-        const { frames, edit } = JSON.parse((await readBody(req)).toString()) as { frames: string[]; edit: Omit<Edit, 'line' | 'column'> };
+        // `edit` is one edit or a list for the same element; a list is applied together and undone as one step.
+        const { frames, edit } = JSON.parse((await readBody(req)).toString()) as { frames: string[]; edit: Omit<Edit, 'line' | 'column'> | Omit<Edit, 'line' | 'column'>[] };
         const loc = preview.mapper?.resolve(frames);
         if (!loc) return json(res, 409, { error: 'Could not map this element back to source code' });
         const file = relative(root, resolve(root, loc.file)).split(sep).join('/');
-        const src = readFileSync(resolve(root, file), 'utf8');
         try {
-          const next = applyEdit(src, { ...edit, line: loc.line, column: loc.column } as Edit);
+          let next = readFileSync(resolve(root, file), 'utf8');
+          for (const e of Array.isArray(edit) ? edit : [edit]) next = applyEdit(next, { ...e, line: loc.line, column: loc.column } as Edit);
           writeTracked(file, next);
           return json(res, 200, { file, line: loc.line });
         } catch (e) {
@@ -284,9 +285,11 @@ export async function startStudio(opts: StudioOptions): Promise<Studio> {
         const undo = p === '/api/undo';
         const step = undo ? history[historyPos - 1] : history[historyPos];
         if (!step) return json(res, 200, { ok: false });
-        writeFileSync(projectPath(step.path), undo ? step.before : step.after);
+        const content = undo ? step.before : step.after;
+        writeFileSync(projectPath(step.path), content);
         historyPos += undo ? -1 : 1;
-        return json(res, 200, { ok: true, path: step.path });
+        // The content comes back so the editor can show it at once, without waiting for the file watcher.
+        return json(res, 200, { ok: true, path: step.path, content, canUndo: historyPos > 0, canRedo: historyPos < history.length });
       }
       if (p === '/api/export' && req.method === 'POST') {
         const o = JSON.parse((await readBody(req)).toString()) as { output: string; codec?: string; scale?: number; still?: boolean; frame?: number; comp?: string; concurrency?: number };

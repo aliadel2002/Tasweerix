@@ -21,6 +21,8 @@ export interface TimelineRow {
   frames: string[];
   keyframes: { prop: string; times: number[]; frames: string[] }[];
   parent?: string;
+  group: boolean;
+  media?: { kind: 'video' | 'image'; src: string; in: number; out?: number; speed: number };
 }
 
 export interface AudioRow {
@@ -38,6 +40,8 @@ export interface Inspection {
   name?: string;
   start: number;
   duration: number | null;
+  /** The source sets a duration (otherwise it follows the media or the composition). */
+  fixedDuration: boolean;
   props: Record<string, unknown>;
   animated: string[];
   explicit: string[];
@@ -56,6 +60,7 @@ export interface PreviewApi {
   hitTest(x: number, y: number, frame: number): string | null;
   bounds(id: string, frame: number): [number, number][] | null;
   parentMatrix(id: string, frame: number): number[] | null;
+  origin(id: string, frame: number): [number, number] | null;
   audio(): Promise<{ sampleRate: number; channels: Float32Array[] } | null>;
   waveform(src: string, buckets: number): Promise<{ min: number[]; max: number[]; duration: number }>;
 }
@@ -79,13 +84,13 @@ export const api = {
   state: (): Promise<ServerState> => fetch('/api/state').then((r) => r.json()),
   readFile: (path: string): Promise<string> => fetch(`/api/file?path=${encodeURIComponent(path)}`).then((r) => r.text()),
   writeFile: (path: string, content: string) => fetch(`/api/file?path=${encodeURIComponent(path)}`, { method: 'PUT', body: content }),
-  async edit(frames: string[], edit: Record<string, unknown>): Promise<{ file?: string; line?: number; error?: string }> {
+  async edit(frames: string[], edit: Record<string, unknown> | Record<string, unknown>[]): Promise<{ file?: string; line?: number; error?: string }> {
     const r = await fetch('/api/edit', { method: 'POST', body: JSON.stringify({ frames, edit }) });
     return r.json();
   },
   locate: (frames: string[]): Promise<{ file: string; line: number; column: number } | null> => fetch('/api/locate', { method: 'POST', body: JSON.stringify({ frames }) }).then((r) => r.json()),
-  undo: () => fetch('/api/undo', { method: 'POST' }).then((r) => r.json()),
-  redo: () => fetch('/api/redo', { method: 'POST' }).then((r) => r.json()),
+  undo: (): Promise<HistoryStep> => fetch('/api/undo', { method: 'POST' }).then((r) => r.json()),
+  redo: (): Promise<HistoryStep> => fetch('/api/redo', { method: 'POST' }).then((r) => r.json()),
   setEntry: (entry: string) => fetch('/api/entry', { method: 'POST', body: JSON.stringify({ entry }) }),
   async upload(path: string, file: Blob): Promise<void> {
     const r = await fetch(`/api/upload?path=${encodeURIComponent(path)}`, { method: 'POST', body: file });
@@ -97,6 +102,27 @@ export const api = {
   runCommand: (name: string, input: string, file: string): Promise<{ ok: boolean; log: string[]; error?: string }> =>
     fetch('/api/command', { method: 'POST', body: JSON.stringify({ name, input, file }) }).then((r) => r.json()),
 };
+
+/** Result of an undo or redo: the file it touched and what that file now holds. */
+export interface HistoryStep {
+  ok: boolean;
+  path?: string;
+  content?: string;
+  canUndo?: boolean;
+  canRedo?: boolean;
+}
+
+/**
+ * A small frame of a video, for timeline thumbnails. Uses its own decoder client, so it never disturbs
+ * the preview's sequential decode.
+ */
+export async function videoThumb(src: string, time: number, height: number): Promise<ImageBitmap> {
+  const res = await fetch(`/__tx/frame?${new URLSearchParams({ src, t: time.toFixed(3), h: String(height), client: 'thumbs' })}`);
+  if (!res.ok) throw new Error(`thumbnail ${res.status}`);
+  const w = Number(res.headers.get('x-width'));
+  const h = Number(res.headers.get('x-height'));
+  return createImageBitmap(new ImageData(new Uint8ClampedArray(await res.arrayBuffer()), w, h));
+}
 
 export interface StudioCommand {
   name: string;
