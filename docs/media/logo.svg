@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="96" height="96" role="img" aria-label="Tasweerix">
+  <title>Tasweerix</title>
+  <rect x="2" y="2" width="28" height="28" rx="7" fill="#f2a93b"/>
+  <path d="M24 11.500c0 7-2.500 10.500-8.500 10.500C10 22 8 19.800 8 16" fill="none" stroke="#1b1204" stroke-width="3.200" stroke-linecap="round"/>
+  <path d="M13.500 7.200l2.100 2.100-2.100 2.100-2.100-2.100z M17.700 7.200l2.100 2.100-2.100 2.100-2.100-2.100z" fill="#1b1204"/>
+</svg>

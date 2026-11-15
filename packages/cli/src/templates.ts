@@ -45,11 +45,11 @@ export default composition({ width: 1080, height: 1080, fps: 30, duration: 6, ba
   c.add(text('code-first motion graphics', { at: [540, 1000], size: 36, fill: '#94a3b8' }).glyphs(textFx.wipe({ by: 'word', start: 2 })));
 });
 `,
-  arabic: `import { composition, text, textFx, kashidaText, keys } from 'tasweerix';
+  arabic: `import { composition, text, arabicFx, kashidaText, keys } from 'tasweerix';
 
-// Use any Arabic TTF/OTF font file (e.g. assets/Cairo-Bold.ttf). Glyphs animate in reading order.
+// Use any Arabic TTF/OTF font file (e.g. assets/Cairo-Bold.ttf). Letters are written on in reading order.
 export default composition({ width: 1920, height: 1080, fps: 30, duration: 5, background: '#111827' }, (c) => {
-  c.add(text('مرحبا بالعالم', { font: 'assets/font.ttf', size: 160, fill: '#fff' }).glyphs(textFx.dropIn({ stagger: 0.06 })));
+  c.add(text('مرحبا بالعالم', { font: 'assets/font.ttf', size: 160, fill: '#fff' }).glyphs(arabicFx.write()));
   c.add(text(kashidaText('جميل', keys([[1, 0], [2.5, 4]])), { font: 'assets/font.ttf', size: 110, fill: '#facc15', at: [960, 760] }));
 });
 `,

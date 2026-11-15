@@ -20,6 +20,10 @@ Presets: `reveal`, `fadeUp`, `fadeDown`, `pop`, `blurIn`, `spinIn`, `dropIn`, `s
 `order` (`reading`, `visual`, `reverse`, `center-out`, `edges-in`, `random`), `start`, `stagger`,
 `duration`, `from`/`to`, `ease`. Use `textFx.out(...)` with a later `start` for the exit.
 
+For Arabic and other joining scripts prefer `arabicFx`: `write`, `ink`, `settle`, `rise`, `swing`, `lift` (exit)
+and `breathe` (loop). They animate letters or words in reading order and never add tracking, which would
+break joined words. `bilingualTitle(arabic, latin, { font })` builds an Arabic and Latin title card.
+
 ## Arabic and right-to-left text
 
 Give `font` a **font file** to shape with HarfBuzz and the Unicode bidi algorithm: joined forms,
@@ -27,13 +31,13 @@ ligatures and marks stay correct while each glyph animates in reading order. Wit
 RTL text animates per word only.
 
 ```ts
-import { composition, text, textFx, kashidaText, keys, arabicDigits, rect, gradient } from 'tasweerix';
+import { composition, text, textFx, arabicFx, kashidaText, keys, arabicDigits, rect, gradient } from 'tasweerix';
 
 const CAIRO = 'assets/fonts/Cairo-Bold.ttf';
 
 export default composition({ width: 1920, height: 1080, fps: 30, duration: 5, background: '#0b0d17' }, (c) => {
   c.add(rect({ size: [1920, 1080], fill: gradient.radial([0, 0], 1100, ['#1e1b4b', '#0b0d17']) }));
-  c.add(text('مرحبا بالعالم', { font: CAIRO, size: 160, fill: '#fff', at: [960, 420] }).glyphs(textFx.dropIn({ by: 'glyph', order: 'reading', stagger: 0.06 })));
+  c.add(text('مرحبا بالعالم', { font: CAIRO, size: 160, fill: '#fff', at: [960, 420] }).glyphs(arabicFx.write()));
   c.add(text(kashidaText('جميل', keys([[1, 0], [2.5, 4, 'inOutCubic']])), { font: CAIRO, size: 110, fill: '#facc15', at: [960, 680] }));
   c.add(text(`أهلاً بكم ${arabicDigits(2026)}`, { font: CAIRO, size: 48, fill: '#cbd5e1', at: [960, 880] }).glyphs(textFx.fadeUp({ by: 'word', stagger: 0.12 })));
 });

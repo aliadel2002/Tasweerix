@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/media/logo.svg" width="88" height="88" alt="Tasweerix logo: the Arabic letter ت"></p>
+
 # Tasweerix
 
 **A code-first media engine.** You write TypeScript that describes edits and animations. Tasweerix
@@ -28,6 +30,11 @@ tasweerix studio .                                # live editor with two-way edi
 
 > *Tasweer* (تصوير) is Arabic for photography and image-making.
 
+| Arabic type that animates letter by letter | A studio that writes your edits back into code |
+| --- | --- |
+| ![Arabic text written on letter by letter, a word stretched with kashida and a mixed Arabic and English line](docs/media/arabic-kinetic.gif) | ![Tasweerix Studio: a title is dragged and rotated on the canvas and a clip is trimmed on the timeline while the source code updates](docs/media/studio.gif) |
+| [`examples/arabic-kinetic`](examples/arabic-kinetic), 30 lines of TypeScript | `tasweerix studio`: move, rotate and trim on screen; the source follows |
+
 ---
 
 ## What's inside
@@ -40,9 +47,9 @@ tasweerix studio .                                # live editor with two-way edi
 | **Audio** | A pure-TypeScript engine with identical output in Node and the browser. It covers EQ, compressor, limiter, gate, de-esser, reverb (algorithmic and convolution), delay, chorus, phaser, distortion, time-stretch, pitch shift and noise reduction. It also has sidechain ducking, buses, stems, BS.1770 loudness, synth voices and SFX. Third-party VST3, CLAP, LV2 and LADSPA plugins run in clip and bus chains with `afx.plugin()`. |
 | **Motion graphics** | Kinetic typography, enter/exit/loop behaviors, path morphing, trim paths, follow-path, repeaters, deterministic particles, animated charts, lower thirds, title cards, callouts and audio-reactive visuals. |
 | **Illustration** | Path builder, boolean operations, offset, stroke-to-path, Poisson disc, Delaunay and Voronoi, flow fields, L-systems, patterns, SVG import, and SVG export of any frame. |
-| **Typography** | HarfBuzz shaping and the Unicode bidi algorithm. **Arabic and other RTL or joining scripts animate letter by letter without breaking their joined forms.** Kashida stretching and Arabic-Indic digits are included. |
+| **Typography** | HarfBuzz shaping and the Unicode bidi algorithm. **Arabic and other RTL or joining scripts animate letter by letter without breaking their joined forms.** Kashida stretching and Arabic-Indic digits are included, with `arabicFx` presets (write-on, ink, settle, rise, swing, lift, breathe) and a bilingual title that keep joined words intact. |
 | **Smart editing** | Silence jump-cuts, beat detection and beat-synced montages, scene detection, loudness matching and leveling, and auto-ducking. Results are plain cut lists that stay editable as code. |
-| **Studio** | A web editor with live preview, timeline, inspector and code editor. Dragging on the canvas, trimming or moving clips on the timeline, moving keyframes or editing the inspector **rewrites your source code** and keeps its formatting. |
+| **Studio** | A web editor with live preview, timeline, inspector and code editor, in English or Arabic (right to left). Dragging, scaling or rotating on the canvas, trimming or moving clips on the timeline, moving keyframes or editing the inspector **rewrites your source code**. Typing and visual edits share one undo history. |
 | **3D** | Real 3D scenes as layers: boxes, spheres, tori, extruded SVG paths, **extruded Arabic and Latin text** shaped by HarfBuzz, glTF/GLB and OBJ models with skeletal animation and morph targets. Metalness/roughness materials, textures (images, live video, any 2D layer), image-based lighting and reflections (built-in studio and sky, or your own .hdr), soft shadows from several directional and point lights, fog, animated cameras with cuts, and After Effects-style 3D layers. Rendered with WebGL2. |
 | **Stabilization and tracking** | Pure-TypeScript computer vision (corner detection, pyramidal optical flow, RANSAC). Smooth or tripod-lock shaky footage with automatic edge cropping (perspective and rolling-shutter aware), pin graphics to moving objects with point tracking, and corner-pin pictures onto tracked planes. |
 | **AI** | Claude writes and reads in your builds: generated titles and copy, structured JSON, image and video-frame descriptions. Speech becomes word-timed captions (translated if you like), transcript-based cuts and chapter markers. The **assistant** edits your project code from a sentence, in the CLI and in the studio. Answers are cached so renders stay deterministic; providers are pluggable. |
@@ -146,7 +153,7 @@ See [`docs/`](docs) for guides and the API reference:
 | [`examples/hello`](examples/hello) | Shapes, text, a GPU wipe and a glow. |
 | [`examples/promo`](examples/promo) | Footage, transitions, LUT grade, titles, SRT captions, lower third, confetti, music and SFX. |
 | [`examples/beat-viz`](examples/beat-viz) | A synthesized drum loop and audio-reactive spectrum bars. |
-| [`examples/arabic-kinetic`](examples/arabic-kinetic) | HarfBuzz-shaped Arabic animating per glyph, kashida stretch and bidi text. |
+| [`examples/arabic-kinetic`](examples/arabic-kinetic) | HarfBuzz-shaped Arabic written on letter by letter with `arabicFx`, kashida stretch and bidi text. |
 | [`examples/photo-retouch`](examples/photo-retouch) | White balance, straighten, healing, graduated and luminosity masks, plus a batch script. |
 | [`examples/generative-poster`](examples/generative-poster) | Voronoi mosaic with boolean clipping, flow fields and an Arabic title (PNG and SVG). |
 | [`examples/smart-edit`](examples/smart-edit) | Auto jump-cut, ducking under the voice and a beat-synced montage. |

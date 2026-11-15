@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, it } from 'vitest';
 import { interpolate, makeContext, parsePath, pathBounds, rect, star, text } from '@tasweerix/core';
-import { counter, enterFx, exitFx, followPath, morph, morphPaths, particles, repeat, scramble } from '../src';
+import { arabicFx, bilingualTitle, counter, enterFx, exitFx, followPath, morph, morphPaths, particles, repeat, scramble } from '../src';
 import { closeTestBrowser, renderFrames } from '../../cli/src/testing';
 import { join } from 'node:path';
 
@@ -82,5 +82,50 @@ describe('motion showcase renders (browser)', () => {
       for (let i = 0; i < f.data.length; i += 4) if (f.data[i]! + f.data[i + 1]! + f.data[i + 2]! > 200) lit++;
       expect(lit).toBeGreaterThan(1000);
     }
+  });
+});
+
+describe('Arabic presets', () => {
+  it('animate letters or words in reading order and never add tracking', () => {
+    for (const [name, make] of Object.entries(arabicFx)) {
+      const a = (make as () => ReturnType<typeof arabicFx.write>)();
+      expect(['cluster', 'word'], name).toContain(a.by);
+      expect(a.order, name).toBe(name === 'lift' ? 'reverse' : 'reading');
+      expect(a.from.tracking, name).toBeUndefined();
+      expect(a.to?.tracking, name).toBeUndefined();
+    }
+    expect(arabicFx.write({ start: '500ms', by: 'word' })).toMatchObject({ start: 0.5, by: 'word', from: { reveal: 0 } });
+    expect(arabicFx.lift().to).toEqual({ opacity: 0, y: -36 });
+    const swell = arabicFx.breathe({ amount: 0.1, period: 4 }).custom!;
+    expect(swell({ index: 0, count: 3, progress: 0, ctx: ctx(1) }).scale).toBeCloseTo(1.1);
+  });
+
+  it('builds a bilingual title from an Arabic line, a rule and a Latin line', () => {
+    const g = bilingualTitle('تصوير', 'Image-making', { size: 100, start: 1 });
+    expect(g.children.map((c) => c.kind)).toEqual(['text', 'polyline', 'text']);
+    expect(g.start).toBe(1);
+    expect(g.children[0]!.value('direction', ctx(0))).toBe('rtl');
+  });
+
+  it('writes shaped Arabic on from the right (browser)', async () => {
+    const { frames } = await renderFrames({
+      dir: join(__dirname, '.tmp'),
+      root: join(__dirname, '../../..'),
+      frames: [0, 9, 75],
+      source: `import { composition, text, arabicFx } from 'tasweerix';
+      export default composition({ width: 600, height: 200, fps: 30, duration: 3, background: '#000' }, (c) => {
+        c.add(text('مرحبا بالعالم', { font: 'assets/fonts/Cairo-Bold.ttf', size: 80, fill: '#fff' }).glyphs(arabicFx.write({ stagger: 0.1, duration: 0.2 })));
+      });`,
+    });
+    const ink = (f: (typeof frames)[0], x0: number, x1: number) => {
+      let n = 0;
+      for (let y = 0; y < f.height; y++) for (let x = x0; x < x1; x++) if (f.at(x, y)[0] > 128) n++;
+      return n;
+    };
+    expect(ink(frames[0]!, 0, 600)).toBe(0);
+    // A third of a second in, only the first letters exist, and they are the rightmost ones.
+    expect(ink(frames[1]!, 300, 600)).toBeGreaterThan(200);
+    expect(ink(frames[1]!, 0, 300)).toBe(0);
+    expect(ink(frames[2]!, 0, 300)).toBeGreaterThan(1000);
   });
 });
